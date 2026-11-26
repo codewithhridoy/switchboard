@@ -9,6 +9,7 @@ import { RoutingView } from './components/RoutingView';
 import { SettingsDialog } from './components/SettingsDialog';
 import { ActiveTab, Sidebar } from './components/Sidebar';
 import { SyncView } from './components/SyncView';
+import { UsageView } from './components/UsageView';
 import { useSwitchboard } from './hooks/useSwitchboard';
 import { applyThemePreference, getStoredTheme } from './utils/theme';
 
@@ -24,6 +25,10 @@ const TAB_HEADERS: Record<ActiveTab, { title: string; subtitle: string }> = {
   accounts: {
     title: 'Accounts & Quotas',
     subtitle: 'Connect Claude Team, Claude Personal, Google AI Pro (agy), Codex, and API keys.',
+  },
+  usage: {
+    title: 'Usage & Limits',
+    subtitle: 'Track 5-hour session, daily, and weekly token usage with configurable auto-switch caps.',
   },
   routing: {
     title: 'Smart Routing',
@@ -171,6 +176,13 @@ export const App: React.FC = () => {
               onTestAccount={actions.testAccount}
               onLaunchCliLogin={actions.launchCliLogin}
               onRefreshCliHealth={actions.refreshCliHealth}
+            />
+          )}
+          {activeTab === 'usage' && (
+            <UsageView
+              state={state}
+              onRefreshUsage={actions.refreshUsage}
+              onUpdateAccount={actions.updateAccount}
             />
           )}
           {activeTab === 'routing' && (

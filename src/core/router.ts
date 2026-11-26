@@ -2,9 +2,11 @@ import {
   AccountProfile,
   AccountScope,
   AccountStatus,
+  AccountUsageSummary,
   RoutingRule,
   TaskCategory,
 } from '../shared/types';
+import { isAccountOverConfiguredLimit } from './usage';
 
 export interface RouteSelection {
   account: AccountProfile;
@@ -19,6 +21,7 @@ export interface RouteOptions {
   workspaceDir?: string;
   forcedAccountId?: string | null;
   excludeAccountIds?: string[];
+  usageSummaries?: Record<string, AccountUsageSummary>;
   now?: number;
 }
 
@@ -44,6 +47,7 @@ export function isAccountEligible(
     workspaceDir?: string;
     allowCrossScope: boolean;
     excludeAccountIds?: string[];
+    usageSummary?: AccountUsageSummary;
     now?: number;
   }
 ): { eligible: boolean; reason?: string } {
@@ -55,6 +59,11 @@ export function isAccountEligible(
   const status = getAccountStatus(account, now);
   if (status !== 'ready') {
     return { eligible: false, reason: `Account status is ${status}` };
+  }
+
+  const limitCheck = isAccountOverConfiguredLimit(account, opts.usageSummary);
+  if (limitCheck.overLimit) {
+    return { eligible: false, reason: limitCheck.reason };
   }
 
   if (
@@ -121,6 +130,7 @@ export function selectAccountForTask(
         workspaceDir: options.workspaceDir,
         allowCrossScope: !strictScope && allowCrossScope,
         excludeAccountIds: exclude,
+        usageSummary: options.usageSummaries?.[acc.id],
         now,
       });
       return check.eligible;

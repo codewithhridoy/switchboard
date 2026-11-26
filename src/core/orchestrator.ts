@@ -4,6 +4,7 @@ import path from 'node:path';
 import { PROVIDER_PRESETS } from '../shared/presets';
 import {
   AccountProfile,
+  AccountUsageSummary,
   AppSettings,
   ChatThread,
   CliHealthInfo,
@@ -21,6 +22,7 @@ import {
   Subtask,
   SwitchboardState,
   TaskStreamEvent,
+  UsageRecord,
 } from '../shared/types';
 import { classifyPrompt, decomposePrompt, deriveTitle } from './classifier';
 import {
@@ -42,6 +44,7 @@ import { checkCliHealth, discoverLiveModels } from './runners/cliEnv';
 import { getRunnerForProvider } from './runners/index';
 import { ProviderRunner } from './runners/types';
 import { DEFAULT_SYNC_CONFIG, SwitchboardStore } from './store';
+import { computeUsageSummaries, estimateTokens, getDefaultLimitsForProvider } from './usage';
 
 export interface OrchestratorDeps {
   store?: SwitchboardStore;
@@ -53,6 +56,8 @@ export class SwitchboardOrchestrator extends EventEmitter {
   private readonly runnerFactory: (provider: ProviderKind) => ProviderRunner;
   private cliHealth: CliHealthInfo[] = [];
   private discoveredModels: Partial<Record<ProviderKind, ModelChoice[]>> = {};
+  private usageSummariesCache: Record<string, AccountUsageSummary> = {};
+  private usageCacheAt = 0;
   private queueRunning = false;
   private activeAbortController: AbortController | null = null;
   private activeTaskId: string | null = null;
@@ -88,6 +93,24 @@ export class SwitchboardOrchestrator extends EventEmitter {
     return this.cliHealth;
   }
 
+  public refreshUsage(): Record<string, AccountUsageSummary> {
+    const data = this.store.getData();
+    this.usageSummariesCache = computeUsageSummaries(data.accounts, data.usageLog);
+    this.usageCacheAt = Date.now();
+    this.emitState();
+    return this.usageSummariesCache;
+  }
+
+  private getFreshUsageSummaries(): Record<string, AccountUsageSummary> {
+    const now = Date.now();
+    if (now - this.usageCacheAt > 15_000 || Object.keys(this.usageSummariesCache).length === 0) {
+      const data = this.store.getData();
+      this.usageSummariesCache = computeUsageSummaries(data.accounts, data.usageLog, now);
+      this.usageCacheAt = now;
+    }
+    return this.usageSummariesCache;
+  }
+
   public getState(): SwitchboardState {
     const data = this.store.getData();
     const now = Date.now();
@@ -119,6 +142,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       sync: safeSync,
       cliHealth: this.cliHealth,
       discoveredModels: this.discoveredModels,
+      usageSummaries: this.getFreshUsageSummaries(),
       queueRunning: this.queueRunning,
     };
   }
@@ -162,6 +186,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       lastUsedAt: null,
       totalRuns: 0,
       totalFailovers: 0,
+      limits: getDefaultLimitsForProvider(input.provider),
     };
 
     data.accounts.push(account);
@@ -714,6 +739,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
         workspaceDir: task.workspaceDir,
         forcedAccountId: task.forcedAccountId,
         excludeAccountIds: excludeIds,
+        usageSummaries: this.getFreshUsageSummaries(),
       });
 
       if (!selection) {
@@ -803,6 +829,21 @@ export class SwitchboardOrchestrator extends EventEmitter {
 
       attempt.endedAt = Date.now();
       attempt.outputPreview = truncateTail(result.output, 300);
+
+      // Record usage telemetry for 5h / daily / weekly analytics
+      this.recordUsage({
+        id: `use-${crypto.randomUUID().slice(0, 8)}`,
+        timestamp: attempt.endedAt,
+        accountId: account.id,
+        provider: account.provider,
+        model: effectiveModel,
+        inputTokens: estimateTokens(composedPrompt),
+        outputTokens: estimateTokens(result.output),
+        cacheTokens: 0,
+        durationMs: Math.max(0, attempt.endedAt - attempt.startedAt),
+        status: result.ok ? 'completed' : result.rateLimited ? 'rate-limited' : 'failed',
+        source: 'switchboard',
+      });
 
       if (result.cancelled || (task.status as string) === 'cancelled') {
         attempt.status = 'cancelled';
@@ -982,6 +1023,18 @@ export class SwitchboardOrchestrator extends EventEmitter {
 
     sections.push(subtask.prompt);
     return sections.join('\n\n---\n\n');
+  }
+
+  private recordUsage(record: UsageRecord): void {
+    const data = this.store.getData();
+    data.usageLog.push(record);
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    if (data.usageLog.length > 2000) {
+      data.usageLog = data.usageLog
+        .filter((r) => r.timestamp >= thirtyDaysAgo)
+        .slice(-2000);
+    }
+    this.usageCacheAt = 0; // Invalidate summary cache
   }
 
   private emitState(): void {

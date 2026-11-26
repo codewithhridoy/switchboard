@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Activity,
+  BarChart3,
   Cloud,
   FolderGit2,
   GitBranch,
@@ -12,7 +13,7 @@ import {
 } from 'lucide-react';
 import { AccountProfile, SwitchboardState } from '../../shared/types';
 
-export type ActiveTab = 'tasks' | 'projects' | 'accounts' | 'routing' | 'sync';
+export type ActiveTab = 'tasks' | 'projects' | 'accounts' | 'usage' | 'routing' | 'sync';
 
 interface SidebarProps {
   state: SwitchboardState;
@@ -112,6 +113,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </span>
           <span className="nav-badge">
             {readyCount}/{state.accounts.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          className={`nav-btn ${activeTab === 'usage' ? 'active' : ''}`}
+          onClick={() => onSelectTab('usage')}
+        >
+          <span className="nav-btn-left">
+            <BarChart3 size={15} />
+            <span>Usage & Limits</span>
           </span>
         </button>
 

@@ -78,6 +78,9 @@ function broadcastEvent(event: TaskStreamEvent): void {
 function registerIpcHandlers(): void {
   ipcMain.handle('switchboard:get-state', () => orchestrator.getState());
   ipcMain.handle('switchboard:refresh-cli-health', () => orchestrator.refreshCliHealth());
+  ipcMain.handle('switchboard:refresh-usage', () => {
+    orchestrator.refreshUsage();
+  });
 
   ipcMain.handle('switchboard:add-account', (_e, input: CreateAccountInput) =>
     orchestrator.addAccount(input)

@@ -6,6 +6,7 @@ const api: SwitchboardApi = {
   getPlatform: () => process.platform,
   getState: () => ipcRenderer.invoke('switchboard:get-state'),
   refreshCliHealth: () => ipcRenderer.invoke('switchboard:refresh-cli-health'),
+  refreshUsage: () => ipcRenderer.invoke('switchboard:refresh-usage'),
   addAccount: (input) => ipcRenderer.invoke('switchboard:add-account', input),
   updateAccount: (id, patch) => ipcRenderer.invoke('switchboard:update-account', id, patch),
   deleteAccount: (id) => ipcRenderer.invoke('switchboard:delete-account', id),

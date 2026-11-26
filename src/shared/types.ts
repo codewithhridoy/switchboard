@@ -23,6 +23,49 @@ export type TaskCategory =
 
 export type AccountStatus = 'ready' | 'running' | 'cooldown' | 'disabled' | 'needs-setup';
 
+export interface AccountLimits {
+  session5hTokens: number;
+  dailyTokens: number;
+  weeklyTokens: number;
+  dailyRuns: number;
+  weeklyRuns: number;
+  /** When true, Switchboard proactively routes away once daily or weekly budget hits 100% */
+  autoSwitchOnLimit: boolean;
+}
+
+export interface UsageRecord {
+  id: string;
+  timestamp: number;
+  accountId: string;
+  provider: ProviderKind;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  durationMs: number;
+  status: 'completed' | 'rate-limited' | 'failed';
+  source: 'switchboard' | 'claude-local';
+}
+
+export interface UsageBucket {
+  runs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheTokens: number;
+  totalTokens: number;
+}
+
+export interface AccountUsageSummary {
+  accountId: string;
+  session5h: UsageBucket;
+  daily: UsageBucket;
+  weekly: UsageBucket;
+  dailySeries: Array<{ date: string; label: string; tokens: number; runs: number }>;
+  byModel: Array<{ model: string; tokens: number; runs: number }>;
+  rateLimitHits7d: number;
+  dataSource: 'claude-local+switchboard' | 'switchboard';
+}
+
 export interface AccountProfile {
   id: string;
   name: string;
@@ -54,6 +97,7 @@ export interface AccountProfile {
   lastUsedAt?: number | null;
   totalRuns: number;
   totalFailovers: number;
+  limits?: AccountLimits;
   /** Optional workspace path prefixes restricted to this account's scope */
   allowedWorkspacePrefixes?: string[];
 }
@@ -213,6 +257,7 @@ export interface SwitchboardState {
   sync: GitHubSyncConfig;
   cliHealth: CliHealthInfo[];
   discoveredModels: Partial<Record<ProviderKind, ModelChoice[]>>;
+  usageSummaries: Record<string, AccountUsageSummary>;
   queueRunning: boolean;
 }
 

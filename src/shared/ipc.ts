@@ -19,6 +19,7 @@ export interface SwitchboardApi {
   getPlatform: () => NodeJS.Platform;
   getState: () => Promise<SwitchboardState>;
   refreshCliHealth: () => Promise<CliHealthInfo[]>;
+  refreshUsage: () => Promise<void>;
   addAccount: (input: CreateAccountInput) => Promise<AccountProfile>;
   updateAccount: (id: string, patch: Partial<AccountProfile>) => Promise<AccountProfile | null>;
   deleteAccount: (id: string) => Promise<boolean>;

@@ -64,6 +64,7 @@ function createBrowserPreviewState(): SwitchboardState {
       },
     ],
     discoveredModels: {},
+    usageSummaries: {},
     queueRunning: false,
   };
 }
@@ -136,6 +137,12 @@ export function useSwitchboard() {
     refreshCliHealth: async () => {
       if (window.switchboard) {
         await window.switchboard.refreshCliHealth();
+        await reload();
+      }
+    },
+    refreshUsage: async () => {
+      if (window.switchboard) {
+        await window.switchboard.refreshUsage();
         await reload();
       }
     },

@@ -14,6 +14,7 @@ import {
   OrchestratedTask,
   ProjectWorkspace,
   RoutingRule,
+  UsageRecord,
 } from '../shared/types';
 
 export interface PersistedData {
@@ -23,6 +24,7 @@ export interface PersistedData {
   projects: ProjectWorkspace[];
   threads: ChatThread[];
   tasks: OrchestratedTask[];
+  usageLog: UsageRecord[];
   settings: AppSettings;
   sync: GitHubSyncConfig;
 }
@@ -70,6 +72,7 @@ export class SwitchboardStore {
           projects: Array.isArray(parsed.projects) ? parsed.projects : [],
           threads: Array.isArray(parsed.threads) ? parsed.threads : [],
           tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
+          usageLog: Array.isArray(parsed.usageLog) ? parsed.usageLog : [],
           settings: {
             ...DEFAULT_SETTINGS,
             ...(parsed.settings ?? {}),
@@ -91,6 +94,7 @@ export class SwitchboardStore {
       projects: [],
       threads: [],
       tasks: [],
+      usageLog: [],
       settings: {
         ...DEFAULT_SETTINGS,
         defaultWorkspaceDir: os.homedir(),
