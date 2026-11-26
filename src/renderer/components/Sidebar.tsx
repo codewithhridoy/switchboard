@@ -114,9 +114,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {sortedPool.map((acc) => {
             const dot = getAccountDotClass(acc);
             const cooldownText = formatRemaining(acc.cooldownUntil);
-            const sortedPool = [...state.accounts].sort((a, b) => a.priority - b.priority);
-
-  return (
+            return (
               <div key={acc.id} className="pool-mini" title={`${acc.name} (${acc.model})`}>
                 <div style={{ minWidth: 0 }}>
                   <div className="pool-mini-name">{acc.name}</div>
