@@ -1,0 +1,65 @@
+{
+  "name": "switchboard-ai",
+  "productName": "Switchboard",
+  "version": "0.1.0",
+  "description": "Open-source cross-platform AI task orchestrator with smart model routing and automatic rate-limit failover across Claude, Gemini, Codex, and API accounts.",
+  "license": "MIT",
+  "author": "Switchboard Contributors",
+  "homepage": "https://github.com/codewithhridoy/switchboard",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/codewithhridoy/switchboard.git"
+  },
+  "keywords": [
+    "ai",
+    "claude",
+    "gemini",
+    "codex",
+    "orchestrator",
+    "model-router",
+    "failover",
+    "electron",
+    "open-source"
+  ],
+  "main": "dist-electron/main/index.js",
+  "scripts": {
+    "dev": "concurrently -k \"pnpm dev:renderer\" \"pnpm dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "tsc -p tsconfig.main.json && wait-on http://localhost:5173 && cross-env NODE_ENV=development ELECTRON_RUN_AS_NODE= electron .",
+    "build": "pnpm build:renderer && pnpm build:main",
+    "build:renderer": "tsc --noEmit && vite build",
+    "build:main": "tsc -p tsconfig.main.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.main.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package:mac": "pnpm build && electron-builder --mac",
+    "package:mac:dir": "pnpm build && electron-builder --mac --dir",
+    "package:win": "pnpm build && electron-builder --win",
+    "package:linux": "pnpm build && electron-builder --linux"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  },
+  "dependencies": {
+    "lucide-react": "^0.511.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^35.2.0",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.3",
+    "wait-on": "^8.0.3"
+  }
+}
