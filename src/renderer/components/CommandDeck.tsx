@@ -15,7 +15,7 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
-import { TASK_CATEGORY_META } from '../../shared/presets';
+import { PROVIDER_MODELS, TASK_CATEGORY_META } from '../../shared/presets';
 import {
   AccountScope,
   CreateTaskInput,
@@ -83,6 +83,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   const [workspaceDir, setWorkspaceDir] = useState(state.settings.defaultWorkspaceDir || '');
   const [workspaceScope, setWorkspaceScope] = useState<AccountScope>('any');
   const [forcedAccountId, setForcedAccountId] = useState<string>('');
+  const [forcedModel, setForcedModel] = useState<string>('');
   const [autoDecompose, setAutoDecompose] = useState(state.settings.autoDecomposeMultiStep);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
     state.tasks[0]?.id ?? null
@@ -115,6 +116,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
       workspaceScope,
       autoDecompose,
       forcedAccountId: forcedAccountId || null,
+      forcedModel: forcedAccountId && forcedModel ? forcedModel : null,
     });
     setPrompt('');
     if (created) {
@@ -229,15 +231,42 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               className="select-compact"
               aria-label="Routing mode"
               value={forcedAccountId}
-              onChange={(e) => setForcedAccountId(e.target.value)}
+              onChange={(e) => {
+                setForcedAccountId(e.target.value);
+                setForcedModel('');
+              }}
             >
               <option value="">Routing: Auto (Best Model)</option>
-              {state.accounts.map((acc) => (
-                <option key={acc.id} value={acc.id}>
-                  Pin: {acc.name} ({acc.model})
-                </option>
-              ))}
+              {[...state.accounts]
+                .sort((a, b) => a.priority - b.priority)
+                .map((acc) => (
+                  <option key={acc.id} value={acc.id}>
+                    Pin: {acc.name} ({acc.model})
+                  </option>
+                ))}
             </select>
+
+            {forcedAccountId && (() => {
+              const pinned = state.accounts.find((a) => a.id === forcedAccountId);
+              if (!pinned) return null;
+              const options = PROVIDER_MODELS[pinned.provider] ?? [];
+              return (
+                <select
+                  className="select-compact mono"
+                  aria-label="Model override"
+                  value={forcedModel}
+                  onChange={(e) => setForcedModel(e.target.value)}
+                  title="Override model for this task only"
+                >
+                  <option value="">Model: Default ({pinned.model})</option>
+                  {options.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label} ({m.id})
+                    </option>
+                  ))}
+                </select>
+              );
+            })()}
 
             <label
               style={{

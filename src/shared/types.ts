@@ -120,6 +120,7 @@ export interface OrchestratedTask {
   workspaceScope: AccountScope;
   autoDecompose: boolean;
   forcedAccountId?: string | null;
+  forcedModel?: string | null;
   category: TaskCategory;
   categoryConfidence: number;
   status: TaskStatus;
@@ -185,6 +186,7 @@ export interface CreateTaskInput {
   workspaceScope?: AccountScope;
   autoDecompose?: boolean;
   forcedAccountId?: string | null;
+  forcedModel?: string | null;
 }
 
 export interface CreateAccountInput {

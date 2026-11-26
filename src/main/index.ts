@@ -14,6 +14,7 @@ import { launchAccountCliLogin } from './terminalLogin';
 
 let mainWindow: BrowserWindow | null = null;
 const orchestrator = new SwitchboardOrchestrator();
+let lastCliScanAt = 0;
 
 function createWindow(): void {
   const isMac = process.platform === 'darwin';
@@ -42,6 +43,14 @@ function createWindow(): void {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+  });
+
+  mainWindow.on('focus', () => {
+    const now = Date.now();
+    if (now - lastCliScanAt > 10_000) {
+      lastCliScanAt = now;
+      void orchestrator.refreshCliHealth();
+    }
   });
 
   mainWindow.on('closed', () => {

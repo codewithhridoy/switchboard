@@ -2,8 +2,10 @@ import React, { useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
+  Check,
   CheckCircle2,
   Copy,
+  Cpu,
   KeyRound,
   Loader2,
   Plus,
@@ -14,7 +16,8 @@ import {
   Wifi,
   XCircle,
 } from 'lucide-react';
-import { AccountProfile, SwitchboardState } from '../../shared/types';
+import { PROVIDER_MODELS } from '../../shared/presets';
+import { AccountProfile, AccountScope, SwitchboardState } from '../../shared/types';
 
 interface AccountsViewProps {
   state: SwitchboardState;
@@ -26,6 +29,8 @@ interface AccountsViewProps {
   onLaunchCliLogin: (id: string) => Promise<{ ok: boolean; command: string; error?: string }>;
   onRefreshCliHealth: () => Promise<void>;
 }
+
+const CUSTOM_MODEL_SENTINEL = '__custom__';
 
 function isCliProvider(provider: AccountProfile['provider']): boolean {
   return provider === 'claude-cli' || provider === 'gemini-cli' || provider === 'codex-cli';
@@ -54,6 +59,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     Record<string, { ok: boolean; message: string }>
   >({});
   const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
+  const [customModelDrafts, setCustomModelDrafts] = useState<Record<string, string>>({});
 
   const sortedAccounts = [...state.accounts].sort((a, b) => a.priority - b.priority);
 
@@ -74,6 +80,30 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
       ...prev,
       [id]: { ok: res.ok, message: `${res.message} (${res.latencyMs}ms)` },
     }));
+  };
+
+  const handleModelSelectChange = (acc: AccountProfile, value: string) => {
+    if (value === CUSTOM_MODEL_SENTINEL) {
+      setCustomModelDrafts((prev) => ({ ...prev, [acc.id]: acc.model }));
+      return;
+    }
+    setCustomModelDrafts((prev) => {
+      const next = { ...prev };
+      delete next[acc.id];
+      return next;
+    });
+    void onUpdateAccount(acc.id, { model: value });
+  };
+
+  const commitCustomModel = (accId: string) => {
+    const draft = (customModelDrafts[accId] ?? '').trim();
+    if (!draft) return;
+    void onUpdateAccount(accId, { model: draft });
+    setCustomModelDrafts((prev) => {
+      const next = { ...prev };
+      delete next[accId];
+      return next;
+    });
   };
 
   return (
@@ -159,7 +189,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
           <div>
             <strong style={{ fontSize: 13.5 }}>Connected Accounts ({sortedAccounts.length})</strong>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              Higher priority accounts are chosen first when capability scores tie. Cooled-down accounts recover automatically.
+              Switch models or priority at any time. Higher priority accounts are chosen first when capability scores tie.
             </div>
           </div>
           <button type="button" className="btn btn-primary btn-sm" onClick={onAddAccount}>
@@ -173,6 +203,9 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
             const cooldownText = formatCooldown(acc.cooldownUntil);
             const feedback = testFeedback[acc.id];
             const isCli = isCliProvider(acc.provider);
+            const knownModels = PROVIDER_MODELS[acc.provider] ?? [];
+            const isKnownModel = knownModels.some((m) => m.id === acc.model);
+            const isEditingCustom = acc.id in customModelDrafts;
 
             return (
               <article key={acc.id} className="card account-card">
@@ -181,13 +214,12 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <span className="pill mono">#{idx + 1}</span>
                       <strong style={{ fontSize: 14.5 }}>{acc.name}</strong>
-                      <span className="pill">{acc.scope}</span>
                     </div>
                     <div
                       className="mono"
-                      style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}
+                      style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 3 }}
                     >
-                      {acc.provider} · {acc.model}
+                      {acc.provider}
                     </div>
                   </div>
 
@@ -234,6 +266,91 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   </div>
                 </div>
 
+                {/* Inline Model & Scope Switcher */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+                  <div className="field">
+                    <label
+                      htmlFor={`model-${acc.id}`}
+                      style={{
+                        fontSize: 11.5,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      <Cpu size={12} />
+                      Active Model
+                    </label>
+                    <select
+                      id={`model-${acc.id}`}
+                      className="select-compact mono"
+                      value={isEditingCustom ? CUSTOM_MODEL_SENTINEL : acc.model}
+                      onChange={(e) => handleModelSelectChange(acc, e.target.value)}
+                    >
+                      {!isKnownModel && !isEditingCustom && (
+                        <option value={acc.model}>{acc.model} (Current)</option>
+                      )}
+                      {knownModels.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label} ({m.id})
+                        </option>
+                      ))}
+                      <option value={CUSTOM_MODEL_SENTINEL}>Custom model ID...</option>
+                    </select>
+                  </div>
+
+                  <div className="field">
+                    <label
+                      htmlFor={`scope-${acc.id}`}
+                      style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}
+                    >
+                      Scope
+                    </label>
+                    <select
+                      id={`scope-${acc.id}`}
+                      className="select-compact"
+                      value={acc.scope}
+                      onChange={(e) =>
+                        void onUpdateAccount(acc.id, { scope: e.target.value as AccountScope })
+                      }
+                    >
+                      <option value="personal">Personal</option>
+                      <option value="team">Team</option>
+                      <option value="any">Any</option>
+                    </select>
+                  </div>
+                </div>
+
+                {isEditingCustom && (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input
+                      type="text"
+                      className="input-field mono"
+                      style={{ flex: 1 }}
+                      placeholder="Enter exact model ID (e.g. opus, gemini-3.5-flash)"
+                      value={customModelDrafts[acc.id] ?? ''}
+                      onChange={(e) =>
+                        setCustomModelDrafts((prev) => ({ ...prev, [acc.id]: e.target.value }))
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          commitCustomModel(acc.id);
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => commitCustomModel(acc.id)}
+                    >
+                      <Check size={13} />
+                      Apply
+                    </button>
+                  </div>
+                )}
+
                 {/* Status Badges */}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {!acc.enabled ? (
@@ -262,7 +379,15 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                     </>
                   ) : (
                     <>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          fontWeight: 600,
+                          color: 'var(--text-primary)',
+                        }}
+                      >
                         <KeyRound size={12} />
                         API Endpoint
                       </div>
@@ -282,14 +407,16 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   <div
                     style={{
                       display: 'flex',
-                      alignItems: 'center',
+                      alignItems: 'flex-start',
                       gap: 6,
                       fontSize: 12,
                       color: feedback.ok ? 'var(--success)' : 'var(--danger)',
                     }}
                   >
-                    {feedback.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-                    <span>{feedback.message}</span>
+                    <span style={{ marginTop: 2, flexShrink: 0 }}>
+                      {feedback.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                    </span>
+                    <span style={{ wordBreak: 'break-word' }}>{feedback.message}</span>
                   </div>
                 )}
 

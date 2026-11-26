@@ -216,6 +216,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       workspaceScope: input.workspaceScope ?? 'any',
       autoDecompose,
       forcedAccountId: input.forcedAccountId ?? null,
+      forcedModel: input.forcedModel?.trim() || null,
       category: classification.category,
       categoryConfidence: classification.confidence,
       status: 'queued',
@@ -409,11 +410,18 @@ export class SwitchboardOrchestrator extends EventEmitter {
       }
 
       const { account, reason } = selection;
+      const effectiveModel =
+        task.forcedModel && task.forcedAccountId === account.id
+          ? task.forcedModel
+          : account.model;
+      const effectiveAccount: AccountProfile =
+        effectiveModel === account.model ? account : { ...account, model: effectiveModel };
+
       subtask.status = attemptIdx === 1 ? 'running' : 'retrying';
       subtask.startedAt = subtask.startedAt ?? Date.now();
       subtask.assignedAccountId = account.id;
       subtask.assignedAccountName = account.name;
-      subtask.assignedModel = account.model;
+      subtask.assignedModel = effectiveModel;
       subtask.routingReason = reason;
 
       const attempt: ExecutionAttempt = {
@@ -421,7 +429,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
         accountId: account.id,
         accountName: account.name,
         provider: account.provider,
-        model: account.model,
+        model: effectiveModel,
         startedAt: Date.now(),
         status: 'running',
       };
@@ -429,7 +437,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       account.lastUsedAt = Date.now();
       account.totalRuns += 1;
 
-      const headerBanner = `\n[Switchboard] Step ${subtask.index + 1}/${task.subtasks.length} → ${account.name} (${account.model}) · ${reason}\n`;
+      const headerBanner = `\n[Switchboard] Step ${subtask.index + 1}/${task.subtasks.length} → ${account.name} (${effectiveModel}) · ${reason}\n`;
       subtask.output += headerBanner;
       this.store.save();
       this.emitEvent({
@@ -453,7 +461,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       const runner = this.runnerFactory(account.provider);
 
       const result = await runner.run({
-        account,
+        account: effectiveAccount,
         prompt: composedPrompt,
         mode: task.mode,
         workspaceDir: task.workspaceDir,

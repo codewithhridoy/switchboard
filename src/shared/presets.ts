@@ -6,6 +6,57 @@ import {
   TaskCategory,
 } from './types';
 
+export interface ModelOption {
+  id: string;
+  label: string;
+}
+
+export const PROVIDER_MODELS: Record<ProviderKind, ModelOption[]> = {
+  'claude-cli': [
+    { id: 'sonnet', label: 'Sonnet (Latest Alias)' },
+    { id: 'opus', label: 'Opus (Latest Alias)' },
+    { id: 'haiku', label: 'Haiku (Latest Alias)' },
+    { id: 'fable', label: 'Fable (Latest Alias)' },
+    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+    { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+    { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+  ],
+  'gemini-cli': [
+    { id: 'auto', label: 'Auto (Gemini 2.5 Pro / 3.5 Flash)' },
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+    { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
+  ],
+  'codex-cli': [
+    { id: 'gpt-5-codex', label: 'GPT-5 Codex' },
+    { id: 'gpt-5', label: 'GPT-5' },
+    { id: 'o3', label: 'o3 (Reasoning)' },
+    { id: 'o4-mini', label: 'o4-mini (Fast)' },
+    { id: 'gpt-4.1', label: 'GPT-4.1' },
+  ],
+  'anthropic-api': [
+    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
+    { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+    { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+  ],
+  'gemini-api': [
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+  ],
+  'openai-compatible': [
+    { id: 'anthropic/claude-sonnet-4', label: 'Claude Sonnet 4 (OpenRouter)' },
+    { id: 'anthropic/claude-opus-4', label: 'Claude Opus 4 (OpenRouter)' },
+    { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro (OpenRouter)' },
+    { id: 'openai/gpt-5', label: 'GPT-5 (OpenRouter)' },
+    { id: 'openai/gpt-4.1', label: 'GPT-4.1' },
+    { id: 'qwen2.5-coder:32b', label: 'Qwen 2.5 Coder 32B (Ollama)' },
+    { id: 'deepseek-r1:32b', label: 'DeepSeek R1 32B (Ollama)' },
+  ],
+};
+
 export interface ProviderPreset {
   id: string;
   label: string;
@@ -82,8 +133,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: 'Claude Code (Personal)',
     subtitle: 'Official Claude CLI with isolated personal CLAUDE_CONFIG_DIR',
     provider: 'claude-cli',
-    defaultModel: 'claude-sonnet-4-6',
-    models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+    defaultModel: 'sonnet',
+    models: PROVIDER_MODELS['claude-cli'].map((m) => m.id),
     defaultScope: 'personal',
     defaultTags: ['Claude', 'Personal', 'Subscription'],
     requiresApiKey: false,
@@ -105,8 +156,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: 'Claude Code (Team)',
     subtitle: 'Second Claude account (same Gmail supported) via isolated CLAUDE_CONFIG_DIR',
     provider: 'claude-cli',
-    defaultModel: 'claude-sonnet-4-6',
-    models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+    defaultModel: 'sonnet',
+    models: PROVIDER_MODELS['claude-cli'].map((m) => m.id),
     defaultScope: 'team',
     defaultTags: ['Claude', 'Team', 'Subscription'],
     requiresApiKey: false,
@@ -129,7 +180,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     subtitle: 'Official Gemini CLI with isolated profile for Google AI Pro / Gemini models',
     provider: 'gemini-cli',
     defaultModel: 'gemini-2.5-pro',
-    models: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-3-pro-preview'],
+    models: PROVIDER_MODELS['gemini-cli'].map((m) => m.id),
     defaultScope: 'personal',
     defaultTags: ['Google Pro', 'Gemini', 'Subscription'],
     requiresApiKey: false,
@@ -152,7 +203,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     subtitle: 'Official Codex CLI for ChatGPT Plus / Pro / Team subscriptions',
     provider: 'codex-cli',
     defaultModel: 'gpt-5-codex',
-    models: ['gpt-5-codex', 'o3', 'gpt-4.1'],
+    models: PROVIDER_MODELS['codex-cli'].map((m) => m.id),
     defaultScope: 'any',
     defaultTags: ['OpenAI', 'Codex', 'Subscription'],
     requiresApiKey: false,
@@ -175,7 +226,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     subtitle: 'Direct Anthropic Messages API (pay-as-you-go, zero CLI dependency)',
     provider: 'anthropic-api',
     defaultModel: 'claude-sonnet-4-6',
-    models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+    models: PROVIDER_MODELS['anthropic-api'].map((m) => m.id),
     defaultScope: 'any',
     defaultTags: ['Anthropic', 'API'],
     requiresApiKey: true,
@@ -198,7 +249,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     subtitle: 'Direct Gemini API via Google AI Studio key',
     provider: 'gemini-api',
     defaultModel: 'gemini-2.5-pro',
-    models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    models: PROVIDER_MODELS['gemini-api'].map((m) => m.id),
     defaultScope: 'any',
     defaultTags: ['Google', 'API'],
     requiresApiKey: true,
@@ -221,12 +272,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     subtitle: 'Any OpenAI-compatible API endpoint (OpenRouter, OpenAI, local Ollama)',
     provider: 'openai-compatible',
     defaultModel: 'anthropic/claude-sonnet-4',
-    models: [
-      'anthropic/claude-sonnet-4',
-      'google/gemini-2.5-pro',
-      'openai/gpt-4.1',
-      'qwen2.5-coder:32b',
-    ],
+    models: PROVIDER_MODELS['openai-compatible'].map((m) => m.id),
     defaultScope: 'any',
     defaultTags: ['API', 'Flexible'],
     requiresApiKey: true,
@@ -277,7 +323,7 @@ export function createStarterAccounts(profilesBaseDir: string): AccountProfile[]
       id: 'acc-claude-team',
       name: 'Claude Team',
       provider: 'claude-cli',
-      model: 'claude-sonnet-4-6',
+      model: 'sonnet',
       scope: 'team',
       enabled: true,
       priority: 1,
@@ -294,7 +340,7 @@ export function createStarterAccounts(profilesBaseDir: string): AccountProfile[]
       id: 'acc-claude-personal',
       name: 'Claude Personal',
       provider: 'claude-cli',
-      model: 'claude-sonnet-4-6',
+      model: 'sonnet',
       scope: 'personal',
       enabled: true,
       priority: 2,

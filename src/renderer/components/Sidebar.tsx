@@ -53,6 +53,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     (t) => t.status === 'running' || t.status === 'queued'
   ).length;
 
+  const sortedPool = [...state.accounts].sort((a, b) => a.priority - b.priority);
+
   return (
     <aside className="sidebar">
       {platform === 'darwin' && <div className="sidebar-mac-drag" />}
@@ -109,10 +111,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="sidebar-section">
         <div className="sidebar-section-label">Active Pool</div>
         <div className="pool-list scroller">
-          {state.accounts.map((acc) => {
+          {sortedPool.map((acc) => {
             const dot = getAccountDotClass(acc);
             const cooldownText = formatRemaining(acc.cooldownUntil);
-            return (
+            const sortedPool = [...state.accounts].sort((a, b) => a.priority - b.priority);
+
+  return (
               <div key={acc.id} className="pool-mini" title={`${acc.name} (${acc.model})`}>
                 <div style={{ minWidth: 0 }}>
                   <div className="pool-mini-name">{acc.name}</div>

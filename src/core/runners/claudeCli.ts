@@ -140,11 +140,12 @@ export function spawnCliProcess(opts: {
         return;
       }
 
+      const errorDetail = (stderr.trim() || stdout.trim()).slice(0, 320);
       resolve({
         ok: false,
         output: stdout.trim(),
         error:
-          stderr.trim() ||
+          errorDetail ||
           `${opts.providerLabel} exited with code ${code ?? 'unknown'}`,
       });
     });
