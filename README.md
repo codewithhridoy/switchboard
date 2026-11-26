@@ -15,7 +15,8 @@ Most "subscription proxy" tools extract browser cookies or spoof OAuth tokens â€
 2. **Smart Task Classification & Step Splitting:** Multi-step prompts (`1. ... 2. ... 3. ...`) are automatically decomposed into sequential subtasks and classified across 8 categories (`Architecture`, `Coding`, `Frontend UI`, `Debugging`, `Large Context`, `Research`, `Writing`, `Quick Edit`).
 3. **Automatic Rate-Limit Failover with Handoff Context:** When an account hits a quota or rate limit (`429`, `usage limit reached`, `RESOURCE_EXHAUSTED`, etc.), Switchboard parses the reset window, puts that account in cooldown with a live timer, packages the partial output as handoff context, and seamlessly switches to the next eligible model.
 4. **Personal vs. Team Isolation Guards:** Keep work repositories pinned to Team accounts, or allow automatic cross-scope fallback per category.
-5. **Cross-Platform Desktop App:** Built with Electron, React 19, and TypeScript for **macOS**, **Windows**, and **Linux**.
+5. **Projects, Multi-Turn Chats & GitHub Cloud Sync:** Organize work into persistent projects with multi-turn chat threads (context carries over even across model switches and failovers), create & push new GitHub repos directly from the app, and sync your settings, accounts, projects, and chat history across macOS/Windows/Linux via a Private GitHub Gist.
+6. **Cross-Platform Desktop App:** Built with Electron, React 19, and TypeScript for **macOS**, **Windows**, and **Linux**.
 
 ---
 

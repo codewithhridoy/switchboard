@@ -117,8 +117,47 @@ export interface Subtask {
   completedAt?: number;
 }
 
+export interface ProjectWorkspace {
+  id: string;
+  name: string;
+  description?: string;
+  path: string;
+  scope: AccountScope;
+  githubRepoUrl?: string;
+  githubFullName?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ChatThread {
+  id: string;
+  projectId: string | null;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface GitHubSyncConfig {
+  connected: boolean;
+  username?: string;
+  avatarUrl?: string;
+  authMode?: 'gh-cli' | 'pat';
+  /** Stored only when authMode === 'pat' (kept local, never synced to cloud) */
+  patToken?: string;
+  gistId?: string;
+  gistUrl?: string;
+  autoSync: boolean;
+  includeTasks: boolean;
+  encryptSecrets: boolean;
+  lastSyncedAt?: number | null;
+  lastSyncDirection?: 'push' | 'pull' | null;
+  lastError?: string | null;
+}
+
 export interface OrchestratedTask {
   id: string;
+  projectId?: string | null;
+  threadId?: string | null;
   title: string;
   prompt: string;
   mode: 'coding' | 'general';
@@ -167,8 +206,11 @@ export interface ModelChoice {
 export interface SwitchboardState {
   accounts: AccountProfile[];
   routingRules: RoutingRule[];
+  projects: ProjectWorkspace[];
+  threads: ChatThread[];
   tasks: OrchestratedTask[];
   settings: AppSettings;
+  sync: GitHubSyncConfig;
   cliHealth: CliHealthInfo[];
   discoveredModels: Partial<Record<ProviderKind, ModelChoice[]>>;
   queueRunning: boolean;
@@ -194,6 +236,8 @@ export interface TaskStreamEvent {
 export interface CreateTaskInput {
   prompt: string;
   title?: string;
+  projectId?: string | null;
+  threadId?: string | null;
   mode: 'coding' | 'general';
   workspaceDir?: string;
   workspaceScope?: AccountScope;
@@ -201,6 +245,23 @@ export interface CreateTaskInput {
   forcedAccountId?: string | null;
   forcedModel?: string | null;
   forcedEffort?: EffortLevel | null;
+}
+
+export interface CreateProjectInput {
+  name: string;
+  description?: string;
+  parentDir: string;
+  scope: AccountScope;
+  template: 'blank' | 'node-ts' | 'web-vite';
+  initGit: boolean;
+  createGitHubRepo: boolean;
+  githubPrivate: boolean;
+}
+
+export interface ImportProjectInput {
+  path: string;
+  name?: string;
+  scope: AccountScope;
 }
 
 export interface CreateAccountInput {

@@ -1,10 +1,15 @@
 import {
   AccountProfile,
   AppSettings,
+  ChatThread,
   CliHealthInfo,
   CreateAccountInput,
+  CreateProjectInput,
   CreateTaskInput,
+  GitHubSyncConfig,
+  ImportProjectInput,
   OrchestratedTask,
+  ProjectWorkspace,
   RoutingRule,
   SwitchboardState,
   TaskStreamEvent,
@@ -25,6 +30,29 @@ export interface SwitchboardApi {
     patch: Partial<RoutingRule>
   ) => Promise<void>;
   updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  // Projects & Multi-Turn Threads
+  createProject: (input: CreateProjectInput) => Promise<ProjectWorkspace>;
+  importProject: (input: ImportProjectInput) => Promise<ProjectWorkspace>;
+  pushProjectToGitHub: (projectId: string, isPrivate: boolean) => Promise<ProjectWorkspace>;
+  deleteProject: (projectId: string) => Promise<boolean>;
+  createThread: (projectId: string | null, title?: string) => Promise<ChatThread>;
+  deleteThread: (threadId: string) => Promise<boolean>;
+  // GitHub Cloud Sync
+  connectGitHub: (opts: {
+    authMode: 'gh-cli' | 'pat';
+    patToken?: string;
+  }) => Promise<GitHubSyncConfig>;
+  disconnectGitHub: () => Promise<GitHubSyncConfig>;
+  updateSyncSettings: (
+    patch: Partial<Pick<GitHubSyncConfig, 'autoSync' | 'includeTasks' | 'encryptSecrets'>>
+  ) => Promise<GitHubSyncConfig>;
+  pushSyncNow: (passphrase?: string) => Promise<{ gistUrl: string; syncedAt: number }>;
+  pullSyncNow: (passphrase?: string) => Promise<{
+    restoredAccounts: number;
+    restoredProjects: number;
+    restoredTasks: number;
+  }>;
+  // Tasks
   enqueueTask: (input: CreateTaskInput) => Promise<OrchestratedTask>;
   retryTask: (taskId: string) => Promise<OrchestratedTask | null>;
   cancelTask: (taskId: string) => Promise<boolean>;

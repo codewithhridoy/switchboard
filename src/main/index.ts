@@ -6,7 +6,10 @@ import {
   AccountProfile,
   AppSettings,
   CreateAccountInput,
+  CreateProjectInput,
   CreateTaskInput,
+  GitHubSyncConfig,
+  ImportProjectInput,
   RoutingRule,
   TaskStreamEvent,
 } from '../shared/types';
@@ -155,6 +158,49 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('switchboard:update-settings', (_e, patch: Partial<AppSettings>) =>
     orchestrator.updateSettings(patch)
+  );
+
+  // Projects & Threads
+  ipcMain.handle('switchboard:create-project', (_e, input: CreateProjectInput) =>
+    orchestrator.createProject(input)
+  );
+  ipcMain.handle('switchboard:import-project', (_e, input: ImportProjectInput) =>
+    orchestrator.importProject(input)
+  );
+  ipcMain.handle(
+    'switchboard:push-project-github',
+    (_e, projectId: string, isPrivate: boolean) =>
+      orchestrator.pushProjectToGitHub(projectId, isPrivate)
+  );
+  ipcMain.handle('switchboard:delete-project', (_e, projectId: string) =>
+    orchestrator.deleteProject(projectId)
+  );
+  ipcMain.handle(
+    'switchboard:create-thread',
+    (_e, projectId: string | null, title?: string) =>
+      orchestrator.createThread(projectId, title)
+  );
+  ipcMain.handle('switchboard:delete-thread', (_e, threadId: string) =>
+    orchestrator.deleteThread(threadId)
+  );
+
+  // GitHub Cloud Sync
+  ipcMain.handle(
+    'switchboard:connect-github',
+    (_e, opts: { authMode: 'gh-cli' | 'pat'; patToken?: string }) =>
+      orchestrator.connectGitHub(opts)
+  );
+  ipcMain.handle('switchboard:disconnect-github', () => orchestrator.disconnectGitHub());
+  ipcMain.handle(
+    'switchboard:update-sync-settings',
+    (_e, patch: Partial<Pick<GitHubSyncConfig, 'autoSync' | 'includeTasks' | 'encryptSecrets'>>) =>
+      orchestrator.updateSyncSettings(patch)
+  );
+  ipcMain.handle('switchboard:push-sync-now', (_e, passphrase?: string) =>
+    orchestrator.pushSyncNow(passphrase)
+  );
+  ipcMain.handle('switchboard:pull-sync-now', (_e, passphrase?: string) =>
+    orchestrator.pullSyncNow(passphrase)
   );
 
   ipcMain.handle('switchboard:enqueue-task', (_e, input: CreateTaskInput) =>

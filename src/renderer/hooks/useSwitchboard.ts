@@ -8,7 +8,10 @@ import {
   AccountProfile,
   AppSettings,
   CreateAccountInput,
+  CreateProjectInput,
   CreateTaskInput,
+  GitHubSyncConfig,
+  ImportProjectInput,
   RoutingRule,
   SwitchboardState,
   TaskStreamEvent,
@@ -19,8 +22,19 @@ function createBrowserPreviewState(): SwitchboardState {
   return {
     accounts: createStarterAccounts('~/.switchboard/profiles'),
     routingRules: DEFAULT_ROUTING_RULES,
+    projects: [],
+    threads: [],
     tasks: [],
     settings: DEFAULT_SETTINGS,
+    sync: {
+      connected: false,
+      autoSync: false,
+      includeTasks: true,
+      encryptSecrets: false,
+      lastSyncedAt: null,
+      lastSyncDirection: null,
+      lastError: null,
+    },
     cliHealth: [
       {
         provider: 'claude-cli',
@@ -28,6 +42,13 @@ function createBrowserPreviewState(): SwitchboardState {
         installed: true,
         version: 'Preview Mode',
         installHint: 'npm install -g @anthropic-ai/claude-code',
+      },
+      {
+        provider: 'agy-cli',
+        binary: 'agy',
+        installed: true,
+        version: 'Preview Mode',
+        installHint: 'Install Google Antigravity CLI from https://antigravity.google',
       },
       {
         provider: 'gemini-cli',
@@ -101,7 +122,6 @@ export function useSwitchboard() {
       void reload();
     });
 
-    // Periodic tick every 15s to auto-refresh expiring cooldown timers
     const interval = setInterval(() => {
       void reload();
     }, 15_000);
@@ -123,59 +143,19 @@ export function useSwitchboard() {
       if (window.switchboard) {
         await window.switchboard.addAccount(input);
         await reload();
-        return;
       }
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              accounts: [
-                ...prev.accounts,
-                {
-                  id: `acc-${Date.now()}`,
-                  name: input.name,
-                  provider: input.provider,
-                  model: input.model,
-                  scope: input.scope,
-                  enabled: true,
-                  priority: prev.accounts.length + 1,
-                  tags: input.tags ?? [input.provider],
-                  strengths: input.strengths ?? {},
-                  profileDir: input.profileDir,
-                  apiKey: input.apiKey,
-                  baseUrl: input.baseUrl,
-                  totalRuns: 0,
-                  totalFailovers: 0,
-                },
-              ],
-            }
-          : prev
-      );
     },
     updateAccount: async (id: string, patch: Partial<AccountProfile>) => {
       if (window.switchboard) {
         await window.switchboard.updateAccount(id, patch);
         await reload();
-        return;
       }
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              accounts: prev.accounts.map((a) => (a.id === id ? { ...a, ...patch } : a)),
-            }
-          : prev
-      );
     },
     deleteAccount: async (id: string) => {
       if (window.switchboard) {
         await window.switchboard.deleteAccount(id);
         await reload();
-        return;
       }
-      setState((prev) =>
-        prev ? { ...prev, accounts: prev.accounts.filter((a) => a.id !== id) } : prev
-      );
     },
     clearCooldown: async (id: string) => {
       if (window.switchboard) {
@@ -199,18 +179,7 @@ export function useSwitchboard() {
       if (window.switchboard) {
         await window.switchboard.updateRoutingRule(category, patch);
         await reload();
-        return;
       }
-      setState((prev) =>
-        prev
-          ? {
-              ...prev,
-              routingRules: prev.routingRules.map((r) =>
-                r.category === category ? { ...r, ...patch } : r
-              ),
-            }
-          : prev
-      );
     },
     updateSettings: async (patch: Partial<AppSettings>) => {
       if (patch.theme) {
@@ -219,12 +188,79 @@ export function useSwitchboard() {
       if (window.switchboard) {
         await window.switchboard.updateSettings(patch);
         await reload();
-        return;
       }
-      setState((prev) =>
-        prev ? { ...prev, settings: { ...prev.settings, ...patch } } : prev
-      );
     },
+    // Projects & Threads
+    createProject: async (input: CreateProjectInput) => {
+      if (!window.switchboard) return null;
+      const proj = await window.switchboard.createProject(input);
+      await reload();
+      return proj;
+    },
+    importProject: async (input: ImportProjectInput) => {
+      if (!window.switchboard) return null;
+      const proj = await window.switchboard.importProject(input);
+      await reload();
+      return proj;
+    },
+    pushProjectToGitHub: async (projectId: string, isPrivate: boolean) => {
+      if (!window.switchboard) return null;
+      const proj = await window.switchboard.pushProjectToGitHub(projectId, isPrivate);
+      await reload();
+      return proj;
+    },
+    deleteProject: async (projectId: string) => {
+      if (window.switchboard) {
+        await window.switchboard.deleteProject(projectId);
+        await reload();
+      }
+    },
+    createThread: async (projectId: string | null, title?: string) => {
+      if (!window.switchboard) return null;
+      const thread = await window.switchboard.createThread(projectId, title);
+      await reload();
+      return thread;
+    },
+    deleteThread: async (threadId: string) => {
+      if (window.switchboard) {
+        await window.switchboard.deleteThread(threadId);
+        await reload();
+      }
+    },
+    // GitHub Cloud Sync
+    connectGitHub: async (opts: { authMode: 'gh-cli' | 'pat'; patToken?: string }) => {
+      if (!window.switchboard) throw new Error('Desktop app required.');
+      const res = await window.switchboard.connectGitHub(opts);
+      await reload();
+      return res;
+    },
+    disconnectGitHub: async () => {
+      if (window.switchboard) {
+        await window.switchboard.disconnectGitHub();
+        await reload();
+      }
+    },
+    updateSyncSettings: async (
+      patch: Partial<Pick<GitHubSyncConfig, 'autoSync' | 'includeTasks' | 'encryptSecrets'>>
+    ) => {
+      if (window.switchboard) {
+        await window.switchboard.updateSyncSettings(patch);
+        await reload();
+      }
+    },
+    pushSyncNow: async (passphrase?: string) => {
+      if (!window.switchboard) throw new Error('Desktop app required.');
+      const res = await window.switchboard.pushSyncNow(passphrase);
+      await reload();
+      return res;
+    },
+    pullSyncNow: async (passphrase?: string) => {
+      if (!window.switchboard) throw new Error('Desktop app required.');
+      const res = await window.switchboard.pullSyncNow(passphrase);
+      await reload();
+      return res;
+    },
+    // Tasks
     enqueueTask: async (input: CreateTaskInput) => {
       if (window.switchboard) {
         const task = await window.switchboard.enqueueTask(input);
@@ -256,6 +292,13 @@ export function useSwitchboard() {
         return window.switchboard.pickFolder();
       }
       return null;
+    },
+    openExternal: async (url: string) => {
+      if (window.switchboard) {
+        await window.switchboard.openExternal(url);
+      } else {
+        window.open(url, '_blank', 'noopener');
+      }
     },
   };
 

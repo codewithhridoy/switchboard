@@ -1,15 +1,21 @@
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 import { PROVIDER_PRESETS } from '../shared/presets';
 import {
   AccountProfile,
   AppSettings,
+  ChatThread,
   CliHealthInfo,
   CreateAccountInput,
+  CreateProjectInput,
   CreateTaskInput,
   ExecutionAttempt,
+  GitHubSyncConfig,
+  ImportProjectInput,
   ModelChoice,
   OrchestratedTask,
+  ProjectWorkspace,
   ProviderKind,
   RoutingRule,
   Subtask,
@@ -17,11 +23,25 @@ import {
   TaskStreamEvent,
 } from '../shared/types';
 import { classifyPrompt, decomposePrompt, deriveTitle } from './classifier';
+import {
+  buildSyncPayload,
+  fetchGitHubUser,
+  findExistingSyncGist,
+  mergeSyncedPayload,
+  pullSyncFromGitHubGist,
+  pushSyncToGitHubGist,
+  resolveGitHubToken,
+} from './githubSync';
+import {
+  createGitHubRepoAndPush,
+  detectGitHubRemote,
+  scaffoldProjectDirectory,
+} from './projects';
 import { getNextCooldownExpiry, selectAccountForTask } from './router';
 import { checkCliHealth, discoverLiveModels } from './runners/cliEnv';
 import { getRunnerForProvider } from './runners/index';
 import { ProviderRunner } from './runners/types';
-import { SwitchboardStore } from './store';
+import { DEFAULT_SYNC_CONFIG, SwitchboardStore } from './store';
 
 export interface OrchestratorDeps {
   store?: SwitchboardStore;
@@ -36,13 +56,13 @@ export class SwitchboardOrchestrator extends EventEmitter {
   private queueRunning = false;
   private activeAbortController: AbortController | null = null;
   private activeTaskId: string | null = null;
+  private autoSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(deps: OrchestratorDeps = {}) {
     super();
     this.store = deps.store ?? new SwitchboardStore();
     this.runnerFactory = deps.runnerFactory ?? getRunnerForProvider;
 
-    // Recover any interrupted running tasks from previous app close
     const data = this.store.getData();
     let recovered = false;
     for (const task of data.tasks) {
@@ -70,7 +90,6 @@ export class SwitchboardOrchestrator extends EventEmitter {
 
   public getState(): SwitchboardState {
     const data = this.store.getData();
-    // Auto-clear expired cooldowns so UI always shows live status
     const now = Date.now();
     let changed = false;
     for (const acc of data.accounts) {
@@ -84,11 +103,20 @@ export class SwitchboardOrchestrator extends EventEmitter {
       this.store.save();
     }
 
+    // Never leak raw PAT token to renderer unnecessarily; mask presence
+    const safeSync: GitHubSyncConfig = {
+      ...data.sync,
+      patToken: data.sync.patToken ? '••••••••' : undefined,
+    };
+
     return {
       accounts: data.accounts,
       routingRules: data.routingRules,
+      projects: data.projects,
+      threads: data.threads,
       tasks: data.tasks,
       settings: data.settings,
+      sync: safeSync,
       cliHealth: this.cliHealth,
       discoveredModels: this.discoveredModels,
       queueRunning: this.queueRunning,
@@ -117,6 +145,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       name: input.name.trim(),
       provider: input.provider,
       model: input.model.trim(),
+      effort: input.effort,
       scope: input.scope,
       enabled: true,
       priority: input.priority ?? data.accounts.length + 1,
@@ -136,8 +165,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
     };
 
     data.accounts.push(account);
-    this.store.save();
-    this.emitState();
+    this.saveAndMaybeSync();
     return account;
   }
 
@@ -146,8 +174,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
     const acc = data.accounts.find((a) => a.id === id);
     if (!acc) return null;
     Object.assign(acc, patch, { id: acc.id });
-    this.store.save();
-    this.emitState();
+    this.saveAndMaybeSync();
     return acc;
   }
 
@@ -159,8 +186,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
     for (const rule of data.routingRules) {
       rule.preferredAccountIds = rule.preferredAccountIds.filter((aid) => aid !== id);
     }
-    this.store.save();
-    this.emitState();
+    this.saveAndMaybeSync();
     return true;
   }
 
@@ -175,6 +201,269 @@ export class SwitchboardOrchestrator extends EventEmitter {
     });
   }
 
+  // ---------- Projects & Multi-Turn Threads ----------
+
+  public async createProject(input: CreateProjectInput): Promise<ProjectWorkspace> {
+    const data = this.store.getData();
+    const { projectPath } = await scaffoldProjectDirectory(input);
+
+    let githubRepoUrl: string | undefined;
+    let githubFullName: string | undefined;
+
+    if (input.createGitHubRepo) {
+      const authMode = data.sync.authMode ?? 'gh-cli';
+      const token = await resolveGitHubToken(authMode, data.sync.patToken);
+      const created = await createGitHubRepoAndPush({
+        projectPath,
+        repoName: input.name,
+        description: input.description,
+        isPrivate: input.githubPrivate,
+        token,
+      });
+      githubRepoUrl = created.htmlUrl;
+      githubFullName = created.fullName;
+    }
+
+    const now = Date.now();
+    const project: ProjectWorkspace = {
+      id: `proj-${crypto.randomUUID().slice(0, 8)}`,
+      name: input.name.trim(),
+      description: input.description?.trim() || undefined,
+      path: projectPath,
+      scope: input.scope,
+      githubRepoUrl,
+      githubFullName,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    data.projects.unshift(project);
+    // Create an initial conversation thread for this project
+    data.threads.unshift({
+      id: `thr-${crypto.randomUUID().slice(0, 8)}`,
+      projectId: project.id,
+      title: 'Main Thread',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    this.saveAndMaybeSync();
+    return project;
+  }
+
+  public async importProject(input: ImportProjectInput): Promise<ProjectWorkspace> {
+    const data = this.store.getData();
+    const existing = data.projects.find((p) => p.path === input.path);
+    if (existing) return existing;
+
+    const remote = await detectGitHubRemote(input.path);
+    const now = Date.now();
+    const project: ProjectWorkspace = {
+      id: `proj-${crypto.randomUUID().slice(0, 8)}`,
+      name: input.name?.trim() || path.basename(input.path) || 'Imported Project',
+      path: input.path,
+      scope: input.scope,
+      githubRepoUrl: remote.htmlUrl,
+      githubFullName: remote.fullName,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    data.projects.unshift(project);
+    data.threads.unshift({
+      id: `thr-${crypto.randomUUID().slice(0, 8)}`,
+      projectId: project.id,
+      title: 'Main Thread',
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    this.saveAndMaybeSync();
+    return project;
+  }
+
+  public async pushProjectToGitHub(
+    projectId: string,
+    isPrivate: boolean
+  ): Promise<ProjectWorkspace> {
+    const data = this.store.getData();
+    const project = data.projects.find((p) => p.id === projectId);
+    if (!project) throw new Error('Project not found.');
+
+    const authMode = data.sync.authMode ?? 'gh-cli';
+    const token = await resolveGitHubToken(authMode, data.sync.patToken);
+    const created = await createGitHubRepoAndPush({
+      projectPath: project.path,
+      repoName: project.name,
+      description: project.description,
+      isPrivate,
+      token,
+    });
+
+    project.githubRepoUrl = created.htmlUrl;
+    project.githubFullName = created.fullName;
+    project.updatedAt = Date.now();
+    this.saveAndMaybeSync();
+    return project;
+  }
+
+  public deleteProject(projectId: string): boolean {
+    const data = this.store.getData();
+    const before = data.projects.length;
+    data.projects = data.projects.filter((p) => p.id !== projectId);
+    if (data.projects.length === before) return false;
+    data.threads = data.threads.filter((t) => t.projectId !== projectId);
+    this.saveAndMaybeSync();
+    return true;
+  }
+
+  public createThread(projectId: string | null, title?: string): ChatThread {
+    const data = this.store.getData();
+    const now = Date.now();
+    const thread: ChatThread = {
+      id: `thr-${crypto.randomUUID().slice(0, 8)}`,
+      projectId,
+      title: title?.trim() || 'New Chat Thread',
+      createdAt: now,
+      updatedAt: now,
+    };
+    data.threads.unshift(thread);
+    this.saveAndMaybeSync();
+    return thread;
+  }
+
+  public deleteThread(threadId: string): boolean {
+    const data = this.store.getData();
+    const before = data.threads.length;
+    data.threads = data.threads.filter((t) => t.id !== threadId);
+    if (data.threads.length === before) return false;
+    data.tasks = data.tasks.filter((t) => t.threadId !== threadId);
+    this.saveAndMaybeSync();
+    return true;
+  }
+
+  // ---------- GitHub Cloud Sync ----------
+
+  public async connectGitHub(opts: {
+    authMode: 'gh-cli' | 'pat';
+    patToken?: string;
+  }): Promise<GitHubSyncConfig> {
+    const data = this.store.getData();
+    const token = await resolveGitHubToken(opts.authMode, opts.patToken);
+    const user = await fetchGitHubUser(token);
+    const existingGist = await findExistingSyncGist(token);
+
+    data.sync = {
+      ...data.sync,
+      connected: true,
+      username: user.login,
+      avatarUrl: user.avatar_url,
+      authMode: opts.authMode,
+      patToken: opts.authMode === 'pat' ? opts.patToken?.trim() : undefined,
+      gistId: existingGist?.id ?? data.sync.gistId,
+      gistUrl: existingGist?.html_url ?? data.sync.gistUrl,
+      lastError: null,
+    };
+
+    this.store.save();
+    this.emitState();
+    return this.getState().sync;
+  }
+
+  public disconnectGitHub(): GitHubSyncConfig {
+    const data = this.store.getData();
+    data.sync = { ...DEFAULT_SYNC_CONFIG };
+    this.store.save();
+    this.emitState();
+    return this.getState().sync;
+  }
+
+  public updateSyncSettings(
+    patch: Partial<Pick<GitHubSyncConfig, 'autoSync' | 'includeTasks' | 'encryptSecrets'>>
+  ): GitHubSyncConfig {
+    const data = this.store.getData();
+    Object.assign(data.sync, patch);
+    this.store.save();
+    this.emitState();
+    return this.getState().sync;
+  }
+
+  public async pushSyncNow(passphrase?: string): Promise<{ gistUrl: string; syncedAt: number }> {
+    const data = this.store.getData();
+    if (!data.sync.connected || !data.sync.authMode) {
+      throw new Error('Connect your GitHub account first.');
+    }
+
+    try {
+      const token = await resolveGitHubToken(data.sync.authMode, data.sync.patToken);
+      const payload = buildSyncPayload(data, {
+        includeTasks: data.sync.includeTasks,
+        encryptSecrets: data.sync.encryptSecrets,
+        passphrase,
+      });
+      const result = await pushSyncToGitHubGist(token, payload, data.sync.gistId);
+      const now = Date.now();
+      data.sync.gistId = result.gistId;
+      data.sync.gistUrl = result.gistUrl;
+      data.sync.lastSyncedAt = now;
+      data.sync.lastSyncDirection = 'push';
+      data.sync.lastError = null;
+      this.store.save();
+      this.emitState();
+      return { gistUrl: result.gistUrl, syncedAt: now };
+    } catch (err) {
+      data.sync.lastError = err instanceof Error ? err.message : String(err);
+      this.store.save();
+      this.emitState();
+      throw err;
+    }
+  }
+
+  public async pullSyncNow(passphrase?: string): Promise<{
+    restoredAccounts: number;
+    restoredProjects: number;
+    restoredTasks: number;
+  }> {
+    const data = this.store.getData();
+    if (!data.sync.connected || !data.sync.authMode) {
+      throw new Error('Connect your GitHub account first.');
+    }
+
+    try {
+      const token = await resolveGitHubToken(data.sync.authMode, data.sync.patToken);
+      const { gistId, gistUrl, payload } = await pullSyncFromGitHubGist(token, data.sync.gistId);
+      const stats = mergeSyncedPayload(data, payload, passphrase);
+      data.sync.gistId = gistId;
+      data.sync.gistUrl = gistUrl;
+      data.sync.lastSyncedAt = Date.now();
+      data.sync.lastSyncDirection = 'pull';
+      data.sync.lastError = null;
+      this.store.save();
+      this.emitState();
+      return stats;
+    } catch (err) {
+      data.sync.lastError = err instanceof Error ? err.message : String(err);
+      this.store.save();
+      this.emitState();
+      throw err;
+    }
+  }
+
+  private saveAndMaybeSync(): void {
+    this.store.save();
+    this.emitState();
+
+    const data = this.store.getData();
+    if (data.sync.connected && data.sync.autoSync && !data.sync.encryptSecrets) {
+      if (this.autoSyncTimer) clearTimeout(this.autoSyncTimer);
+      this.autoSyncTimer = setTimeout(() => {
+        void this.pushSyncNow().catch(() => {
+          // Recorded in sync.lastError
+        });
+      }, 5000);
+    }
+  }
+
   // ---------- Routing & Settings ----------
 
   public updateRoutingRule(category: RoutingRule['category'], patch: Partial<RoutingRule>): void {
@@ -182,15 +471,13 @@ export class SwitchboardOrchestrator extends EventEmitter {
     const rule = data.routingRules.find((r) => r.category === category);
     if (!rule) return;
     Object.assign(rule, patch, { category: rule.category });
-    this.store.save();
-    this.emitState();
+    this.saveAndMaybeSync();
   }
 
   public updateSettings(patch: Partial<AppSettings>): AppSettings {
     const data = this.store.getData();
     data.settings = { ...data.settings, ...patch };
-    this.store.save();
-    this.emitState();
+    this.saveAndMaybeSync();
     return data.settings;
   }
 
@@ -201,6 +488,24 @@ export class SwitchboardOrchestrator extends EventEmitter {
     const autoDecompose = input.autoDecompose ?? data.settings.autoDecomposeMultiStep;
     const classification = classifyPrompt(input.prompt, input.mode);
     const planned = decomposePrompt(input.prompt, input.mode, autoDecompose);
+
+    const project = input.projectId
+      ? data.projects.find((p) => p.id === input.projectId)
+      : undefined;
+
+    let threadId = input.threadId ?? null;
+    if (threadId) {
+      const thread = data.threads.find((t) => t.id === threadId);
+      if (thread) {
+        if (thread.title === 'New Chat Thread' || thread.title === 'Main Thread') {
+          const priorCount = data.tasks.filter((t) => t.threadId === thread.id).length;
+          if (priorCount === 0) {
+            thread.title = deriveTitle(input.prompt);
+          }
+        }
+        thread.updatedAt = Date.now();
+      }
+    }
 
     const subtasks: Subtask[] = planned.map((p, idx) => ({
       id: `sub-${crypto.randomUUID().slice(0, 8)}`,
@@ -215,14 +520,19 @@ export class SwitchboardOrchestrator extends EventEmitter {
 
     const task: OrchestratedTask = {
       id: `task-${crypto.randomUUID().slice(0, 8)}`,
+      projectId: project?.id ?? input.projectId ?? null,
+      threadId,
       title: input.title?.trim() || deriveTitle(input.prompt),
       prompt: input.prompt.trim(),
       mode: input.mode,
       workspaceDir:
         input.mode === 'coding'
-          ? input.workspaceDir?.trim() || data.settings.defaultWorkspaceDir || process.cwd()
+          ? input.workspaceDir?.trim() ||
+            project?.path ||
+            data.settings.defaultWorkspaceDir ||
+            process.cwd()
           : undefined,
-      workspaceScope: input.workspaceScope ?? 'any',
+      workspaceScope: input.workspaceScope ?? project?.scope ?? 'any',
       autoDecompose,
       forcedAccountId: input.forcedAccountId ?? null,
       forcedModel: input.forcedModel?.trim() || null,
@@ -235,13 +545,15 @@ export class SwitchboardOrchestrator extends EventEmitter {
       failoverCount: 0,
     };
 
+    if (project) {
+      project.updatedAt = Date.now();
+    }
+
     data.tasks.unshift(task);
-    // Keep last 100 tasks to prevent unbounded state growth
     if (data.tasks.length > 100) {
       data.tasks = data.tasks.slice(0, 100);
     }
-    this.store.save();
-    this.emitState();
+    this.saveAndMaybeSync();
 
     void this.processQueue();
     return task;
@@ -301,8 +613,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
     const before = data.tasks.length;
     data.tasks = data.tasks.filter((t) => t.id !== taskId);
     if (data.tasks.length === before) return false;
-    this.store.save();
-    this.emitState();
+    this.saveAndMaybeSync();
     return true;
   }
 
@@ -314,7 +625,6 @@ export class SwitchboardOrchestrator extends EventEmitter {
     try {
       while (true) {
         const data = this.store.getData();
-        // FIFO among queued tasks (tasks array is newest-first, so pick oldest queued)
         const nextTask = [...data.tasks].reverse().find((t) => t.status === 'queued');
         if (!nextTask) break;
         await this.executeTask(nextTask);
@@ -328,7 +638,6 @@ export class SwitchboardOrchestrator extends EventEmitter {
   }
 
   private async executeTask(task: OrchestratedTask): Promise<void> {
-    const data = this.store.getData();
     this.activeTaskId = task.id;
     task.status = 'running';
     task.startedAt = task.startedAt ?? Date.now();
@@ -352,7 +661,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
           task.status = 'failed';
           task.error = subtask.error ?? `Subtask "${subtask.title}" failed`;
           task.completedAt = Date.now();
-          this.store.save();
+          this.saveAndMaybeSync();
           this.emitEvent({
             type: 'task-failed',
             taskId: task.id,
@@ -374,7 +683,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       task.completedAt = Date.now();
       task.summary =
         task.subtasks[task.subtasks.length - 1]?.output.slice(0, 600) ?? 'Completed.';
-      this.store.save();
+      this.saveAndMaybeSync();
       this.emitEvent({
         type: 'task-completed',
         taskId: task.id,
@@ -512,7 +821,6 @@ export class SwitchboardOrchestrator extends EventEmitter {
         return true;
       }
 
-      // Check routing rule failover policy
       const rule = data.routingRules.find((r) => r.category === subtask.category);
       const canFailover = rule ? rule.allowFailover : true;
 
@@ -528,7 +836,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
         excludeIds.push(account.id);
 
         const partial = truncateTail(result.output, data.settings.handoffContextChars);
-        handoffNotes = `Previous attempt on ${account.name} (${account.model}) hit a usage/rate limit (${account.cooldownReason}).${
+        handoffNotes = `Previous attempt on ${account.name} (${effectiveModel}) hit a usage/rate limit (${account.cooldownReason}).${
           partial
             ? `\nPartial progress produced before the limit:\n${partial}\nContinue seamlessly from where it stopped without repeating completed work.`
             : '\nStart and complete this step cleanly.'
@@ -571,7 +879,6 @@ export class SwitchboardOrchestrator extends EventEmitter {
         continue;
       }
 
-      // Non-rate-limit error (e.g., CLI not installed, auth missing, transient network error)
       attempt.status = 'failed';
       attempt.reason = result.error ?? 'Unknown error';
       excludeIds.push(account.id);
@@ -628,6 +935,36 @@ export class SwitchboardOrchestrator extends EventEmitter {
     maxChars: number
   ): string {
     const sections: string[] = [];
+
+    // Multi-turn conversation memory for project chat threads
+    if (task.threadId) {
+      const data = this.store.getData();
+      const priorTurns = data.tasks
+        .filter(
+          (t) =>
+            t.threadId === task.threadId &&
+            t.id !== task.id &&
+            t.status === 'completed' &&
+            t.createdAt < task.createdAt
+        )
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .slice(-4);
+
+      if (priorTurns.length > 0) {
+        const transcript = priorTurns
+          .map((turn, idx) => {
+            const reply =
+              turn.summary ||
+              turn.subtasks.map((s) => s.output).join('\n') ||
+              '(completed)';
+            return `Turn ${idx + 1} — User:\n${turn.prompt}\n\nTurn ${idx + 1} — Assistant:\n${truncateTail(reply, 900)}`;
+          })
+          .join('\n\n---\n\n');
+        sections.push(
+          `Previous conversation history in this thread:\n${truncateTail(transcript, maxChars)}`
+        );
+      }
+    }
 
     if (priorStepSummaries.length > 0) {
       sections.push(

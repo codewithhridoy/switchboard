@@ -9,7 +9,10 @@ import {
 import {
   AccountProfile,
   AppSettings,
+  ChatThread,
+  GitHubSyncConfig,
   OrchestratedTask,
+  ProjectWorkspace,
   RoutingRule,
 } from '../shared/types';
 
@@ -17,9 +20,22 @@ export interface PersistedData {
   version: number;
   accounts: AccountProfile[];
   routingRules: RoutingRule[];
+  projects: ProjectWorkspace[];
+  threads: ChatThread[];
   tasks: OrchestratedTask[];
   settings: AppSettings;
+  sync: GitHubSyncConfig;
 }
+
+export const DEFAULT_SYNC_CONFIG: GitHubSyncConfig = {
+  connected: false,
+  autoSync: false,
+  includeTasks: true,
+  encryptSecrets: false,
+  lastSyncedAt: null,
+  lastSyncDirection: null,
+  lastError: null,
+};
 
 export class SwitchboardStore {
   public readonly baseDir: string;
@@ -43,7 +59,7 @@ export class SwitchboardStore {
         const raw = fs.readFileSync(this.stateFile, 'utf8');
         const parsed = JSON.parse(raw) as Partial<PersistedData>;
         return {
-          version: 1,
+          version: 2,
           accounts: Array.isArray(parsed.accounts)
             ? parsed.accounts
             : createStarterAccounts(this.profilesDir),
@@ -51,10 +67,16 @@ export class SwitchboardStore {
             Array.isArray(parsed.routingRules) && parsed.routingRules.length > 0
               ? parsed.routingRules
               : DEFAULT_ROUTING_RULES,
+          projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+          threads: Array.isArray(parsed.threads) ? parsed.threads : [],
           tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
           settings: {
             ...DEFAULT_SETTINGS,
             ...(parsed.settings ?? {}),
+          },
+          sync: {
+            ...DEFAULT_SYNC_CONFIG,
+            ...(parsed.sync ?? {}),
           },
         };
       }
@@ -63,14 +85,17 @@ export class SwitchboardStore {
     }
 
     const initial: PersistedData = {
-      version: 1,
+      version: 2,
       accounts: createStarterAccounts(this.profilesDir),
       routingRules: DEFAULT_ROUTING_RULES,
+      projects: [],
+      threads: [],
       tasks: [],
       settings: {
         ...DEFAULT_SETTINGS,
         defaultWorkspaceDir: os.homedir(),
       },
+      sync: { ...DEFAULT_SYNC_CONFIG },
     };
     this.persist(initial);
     return initial;
@@ -104,11 +129,12 @@ export class SwitchboardStore {
   }
 
   public createProfileDir(slug: string): string {
-    const safe = slug
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 40) || `profile-${Date.now()}`;
+    const safe =
+      slug
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || `profile-${Date.now()}`;
     const dir = path.join(this.profilesDir, safe);
     fs.mkdirSync(dir, { recursive: true });
     return dir;

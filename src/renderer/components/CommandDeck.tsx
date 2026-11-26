@@ -5,8 +5,10 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  FolderGit2,
   FolderOpen,
   Loader2,
+  MessageSquarePlus,
   Play,
   RefreshCw,
   Shield,
@@ -25,6 +27,7 @@ import {
 import { PROVIDER_MODELS, TASK_CATEGORY_META } from '../../shared/presets';
 import {
   AccountScope,
+  ChatThread,
   CreateTaskInput,
   EffortLevel,
   OrchestratedTask,
@@ -33,6 +36,9 @@ import {
 
 interface CommandDeckProps {
   state: SwitchboardState;
+  activeProjectId: string | null;
+  onSelectProject: (projectId: string | null) => void;
+  onCreateThread: (projectId: string | null, title?: string) => Promise<ChatThread | null>;
   onEnqueueTask: (input: CreateTaskInput) => Promise<OrchestratedTask | null>;
   onRetryTask: (taskId: string) => Promise<void>;
   onCancelTask: (taskId: string) => Promise<void>;
@@ -80,16 +86,33 @@ function StatusIcon({ status }: { status: string }) {
 
 export const CommandDeck: React.FC<CommandDeckProps> = ({
   state,
+  activeProjectId,
+  onSelectProject,
+  onCreateThread,
   onEnqueueTask,
   onRetryTask,
   onCancelTask,
   onDeleteTask,
   onPickFolder,
 }) => {
+  const activeProject = state.projects.find((p) => p.id === activeProjectId) ?? null;
+  const projectThreads = useMemo(
+    () =>
+      state.threads.filter((t) =>
+        activeProjectId ? t.projectId === activeProjectId : t.projectId === null
+      ),
+    [state.threads, activeProjectId]
+  );
+
+  const [activeThreadId, setActiveThreadId] = useState<string>('');
   const [prompt, setPrompt] = useState('');
   const [mode, setMode] = useState<'coding' | 'general'>('coding');
-  const [workspaceDir, setWorkspaceDir] = useState(state.settings.defaultWorkspaceDir || '');
-  const [workspaceScope, setWorkspaceScope] = useState<AccountScope>('any');
+  const [workspaceDir, setWorkspaceDir] = useState(
+    activeProject?.path || state.settings.defaultWorkspaceDir || ''
+  );
+  const [workspaceScope, setWorkspaceScope] = useState<AccountScope>(
+    activeProject?.scope || 'any'
+  );
   const [forcedAccountId, setForcedAccountId] = useState<string>('');
   const [forcedBaseModel, setForcedBaseModel] = useState<string>('');
   const [forcedEffort, setForcedEffort] = useState<EffortLevel | ''>('');
@@ -101,18 +124,37 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   const detailEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!workspaceDir && state.settings.defaultWorkspaceDir) {
+    if (activeProject) {
+      setWorkspaceDir(activeProject.path);
+      setWorkspaceScope(activeProject.scope);
+      setMode('coding');
+    } else if (!workspaceDir && state.settings.defaultWorkspaceDir) {
       setWorkspaceDir(state.settings.defaultWorkspaceDir);
     }
-  }, [state.settings.defaultWorkspaceDir, workspaceDir]);
+  }, [activeProject, state.settings.defaultWorkspaceDir, workspaceDir]);
+
+  useEffect(() => {
+    if (activeThreadId && projectThreads.some((t) => t.id === activeThreadId)) {
+      return;
+    }
+    setActiveThreadId(projectThreads[0]?.id ?? '');
+  }, [activeThreadId, projectThreads]);
+
+  const filteredTasks = useMemo(() => {
+    return state.tasks.filter((t) => {
+      if (activeThreadId) return t.threadId === activeThreadId;
+      if (activeProjectId) return t.projectId === activeProjectId;
+      return true;
+    });
+  }, [state.tasks, activeProjectId, activeThreadId]);
 
   const selectedTask = useMemo(() => {
     if (selectedTaskId) {
-      const found = state.tasks.find((t) => t.id === selectedTaskId);
+      const found = filteredTasks.find((t) => t.id === selectedTaskId);
       if (found) return found;
     }
-    return state.tasks[0] ?? null;
-  }, [selectedTaskId, state.tasks]);
+    return filteredTasks[0] ?? null;
+  }, [selectedTaskId, filteredTasks]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -143,8 +185,19 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
       }
     }
 
+    let targetThreadId = activeThreadId || null;
+    if (!targetThreadId && activeProjectId) {
+      const createdThread = await onCreateThread(activeProjectId);
+      if (createdThread) {
+        targetThreadId = createdThread.id;
+        setActiveThreadId(createdThread.id);
+      }
+    }
+
     const created = await onEnqueueTask({
       prompt: cleaned,
+      projectId: activeProjectId,
+      threadId: targetThreadId,
       mode,
       workspaceDir: mode === 'coding' ? workspaceDir : undefined,
       workspaceScope,
@@ -168,13 +221,51 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   return (
     <div className="command-deck">
       <form className="card composer-card" onSubmit={handleSubmit}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <Sparkles size={15} style={{ color: 'var(--accent)' }} />
             <strong style={{ fontSize: 13.5 }}>Assign a Task</strong>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              Switchboard picks the best model per step and fails over automatically when limits hit.
-            </span>
+
+            <select
+              className="select-compact"
+              aria-label="Active project"
+              value={activeProjectId ?? ''}
+              onChange={(e) => onSelectProject(e.target.value || null)}
+            >
+              <option value="">Workspace: General (All)</option>
+              {state.projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  Project: {p.name}
+                </option>
+              ))}
+            </select>
+
+            <select
+              className="select-compact"
+              aria-label="Active chat thread"
+              value={activeThreadId}
+              onChange={(e) => setActiveThreadId(e.target.value)}
+            >
+              <option value="">All Threads</option>
+              {projectThreads.map((thr) => (
+                <option key={thr.id} value={thr.id}>
+                  Thread: {thr.title}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              className="btn btn-sm"
+              title="Start a new multi-turn chat thread"
+              onClick={async () => {
+                const thr = await onCreateThread(activeProjectId, 'New Chat Thread');
+                if (thr) setActiveThreadId(thr.id);
+              }}
+            >
+              <MessageSquarePlus size={13} />
+              New Thread
+            </button>
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {EXAMPLE_PROMPTS.map((ex) => (
@@ -193,6 +284,15 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
             ))}
           </div>
         </div>
+
+        {activeThreadId && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-secondary)' }}>
+            <FolderGit2 size={12} style={{ color: 'var(--accent)' }} />
+            <span>
+              Multi-turn memory active — follow-ups automatically carry context across model switches and failovers.
+            </span>
+          </div>
+        )}
 
         <textarea
           className="composer-textarea scroller"
@@ -380,11 +480,11 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
         {/* Left: Task Queue */}
         <section className="card task-list-panel" aria-label="Task queue">
           <div className="panel-header">
-            <h2>Task Queue</h2>
-            <span className="pill">{state.tasks.length} total</span>
+            <h2>{activeThreadId ? 'Thread Turns' : 'Task Queue'}</h2>
+            <span className="pill">{filteredTasks.length} total</span>
           </div>
 
-          {state.tasks.length === 0 ? (
+          {filteredTasks.length === 0 ? (
             <div className="empty-state">
               <Sparkles size={24} style={{ opacity: 0.5 }} />
               <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>No tasks yet</div>
@@ -394,7 +494,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
             </div>
           ) : (
             <div className="task-list-scroll scroller">
-              {state.tasks.map((task) => {
+              {filteredTasks.map((task) => {
                 const doneSteps = task.subtasks.filter((s) => s.status === 'completed').length;
                 const catMeta = TASK_CATEGORY_META[task.category];
                 return (

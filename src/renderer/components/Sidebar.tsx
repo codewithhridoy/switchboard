@@ -1,6 +1,8 @@
 import React from 'react';
 import {
   Activity,
+  Cloud,
+  FolderGit2,
   GitBranch,
   Layers,
   Plus,
@@ -10,13 +12,15 @@ import {
 } from 'lucide-react';
 import { AccountProfile, SwitchboardState } from '../../shared/types';
 
-export type ActiveTab = 'tasks' | 'accounts' | 'routing';
+export type ActiveTab = 'tasks' | 'projects' | 'accounts' | 'routing' | 'sync';
 
 interface SidebarProps {
   state: SwitchboardState;
   platform: string;
   activeTab: ActiveTab;
+  activeProjectId: string | null;
   onSelectTab: (tab: ActiveTab) => void;
+  onSelectProject: (projectId: string | null) => void;
   onOpenAddAccount: () => void;
   onOpenSettings: () => void;
 }
@@ -42,7 +46,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   state,
   platform,
   activeTab,
+  activeProjectId,
   onSelectTab,
+  onSelectProject,
   onOpenAddAccount,
   onOpenSettings,
 }) => {
@@ -52,7 +58,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const activeTasks = state.tasks.filter(
     (t) => t.status === 'running' || t.status === 'queued'
   ).length;
-
   const sortedPool = [...state.accounts].sort((a, b) => a.priority - b.priority);
 
   return (
@@ -84,6 +89,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <button
           type="button"
+          className={`nav-btn ${activeTab === 'projects' ? 'active' : ''}`}
+          onClick={() => onSelectTab('projects')}
+        >
+          <span className="nav-btn-left">
+            <FolderGit2 size={15} />
+            <span>Projects</span>
+          </span>
+          {state.projects.length > 0 && (
+            <span className="nav-badge">{state.projects.length}</span>
+          )}
+        </button>
+
+        <button
+          type="button"
           className={`nav-btn ${activeTab === 'accounts' ? 'active' : ''}`}
           onClick={() => onSelectTab('accounts')}
         >
@@ -106,7 +125,56 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span>Smart Routing</span>
           </span>
         </button>
+
+        <button
+          type="button"
+          className={`nav-btn ${activeTab === 'sync' ? 'active' : ''}`}
+          onClick={() => onSelectTab('sync')}
+        >
+          <span className="nav-btn-left">
+            <Cloud size={15} />
+            <span>GitHub Sync</span>
+          </span>
+          {state.sync.connected && (
+            <span className="status-dot ready" title={`Synced as @${state.sync.username}`} />
+          )}
+        </button>
       </nav>
+
+      {state.projects.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div className="sidebar-section-label">Workspaces</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {state.projects.slice(0, 5).map((proj) => (
+              <button
+                key={proj.id}
+                type="button"
+                className={`nav-btn ${
+                  activeTab === 'tasks' && activeProjectId === proj.id ? 'active' : ''
+                }`}
+                style={{ padding: '6px 10px', fontSize: 12 }}
+                onClick={() => {
+                  onSelectProject(proj.id);
+                  onSelectTab('tasks');
+                }}
+              >
+                <span className="nav-btn-left" style={{ minWidth: 0 }}>
+                  <FolderGit2 size={13} />
+                  <span
+                    style={{
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {proj.name}
+                  </span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="sidebar-section">
         <div className="sidebar-section-label">Active Pool</div>
@@ -141,7 +209,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           }}
         >
           <Activity size={13} />
-          <span>{state.queueRunning ? 'Orchestrator running' : 'Queue idle'}</span>
+          <span>
+            {state.queueRunning
+              ? 'Orchestrator running'
+              : state.sync.connected && state.sync.username
+                ? `@${state.sync.username}`
+                : 'Queue idle'}
+          </span>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button
