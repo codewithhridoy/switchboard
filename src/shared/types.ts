@@ -9,6 +9,8 @@ export type ProviderKind =
 
 export type AccountScope = 'personal' | 'team' | 'any';
 
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export type TaskCategory =
   | 'architecture'
   | 'coding'
@@ -26,6 +28,7 @@ export interface AccountProfile {
   name: string;
   provider: ProviderKind;
   model: string;
+  effort?: EffortLevel;
   scope: AccountScope;
   enabled: boolean;
   /** Lower number = higher priority when scores tie */
@@ -124,6 +127,7 @@ export interface OrchestratedTask {
   autoDecompose: boolean;
   forcedAccountId?: string | null;
   forcedModel?: string | null;
+  forcedEffort?: EffortLevel | null;
   category: TaskCategory;
   categoryConfidence: number;
   status: TaskStatus;
@@ -196,12 +200,14 @@ export interface CreateTaskInput {
   autoDecompose?: boolean;
   forcedAccountId?: string | null;
   forcedModel?: string | null;
+  forcedEffort?: EffortLevel | null;
 }
 
 export interface CreateAccountInput {
   name: string;
   provider: ProviderKind;
   model: string;
+  effort?: EffortLevel;
   scope: AccountScope;
   priority?: number;
   tags?: string[];

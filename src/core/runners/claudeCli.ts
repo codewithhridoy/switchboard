@@ -20,6 +20,9 @@ export class ClaudeCliRunner implements ProviderRunner {
     if (req.account.model) {
       args.push('--model', req.account.model);
     }
+    if (req.account.effort) {
+      args.push('--effort', req.account.effort);
+    }
     if (req.account.extraArgs?.length) {
       args.push(...req.account.extraArgs);
     }

@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Copy,
   Cpu,
+  Gauge,
   KeyRound,
   Loader2,
   Plus,
@@ -16,11 +17,19 @@ import {
   Wifi,
   XCircle,
 } from 'lucide-react';
+import {
+  composeModelId,
+  EFFORT_LABELS,
+  GroupedModel,
+  groupModelsByBase,
+  pickBestEffort,
+  splitModelAndEffort,
+} from '../../shared/models';
 import { PROVIDER_MODELS } from '../../shared/presets';
 import {
   AccountProfile,
   AccountScope,
-  ModelChoice,
+  EffortLevel,
   SwitchboardState,
 } from '../../shared/types';
 
@@ -48,18 +57,6 @@ function isCliProvider(provider: AccountProfile['provider']): boolean {
 
 function supportsProfileToggle(provider: AccountProfile['provider']): boolean {
   return provider === 'claude-cli' || provider === 'gemini-cli' || provider === 'codex-cli';
-}
-
-function mergeModels(live: ModelChoice[] | undefined, curated: ModelChoice[]): ModelChoice[] {
-  const seen = new Set<string>();
-  const out: ModelChoice[] = [];
-  for (const item of [...(live ?? []), ...curated]) {
-    if (!seen.has(item.id)) {
-      seen.add(item.id);
-      out.push(item);
-    }
-  }
-  return out;
 }
 
 function formatCooldown(until?: number | null): string | null {
@@ -108,17 +105,51 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     }));
   };
 
-  const handleModelSelectChange = (acc: AccountProfile, value: string) => {
-    if (value === CUSTOM_MODEL_SENTINEL) {
+  const handleBaseModelChange = (
+    acc: AccountProfile,
+    groups: GroupedModel[],
+    nextBaseId: string
+  ) => {
+    if (nextBaseId === CUSTOM_MODEL_SENTINEL) {
       setCustomModelDrafts((prev) => ({ ...prev, [acc.id]: acc.model }));
       return;
     }
+
     setCustomModelDrafts((prev) => {
       const next = { ...prev };
       delete next[acc.id];
       return next;
     });
-    void onUpdateAccount(acc.id, { model: value });
+
+    const targetGroup = groups.find((g) => g.baseId === nextBaseId);
+    if (!targetGroup) {
+      void onUpdateAccount(acc.id, { model: nextBaseId });
+      return;
+    }
+
+    const currentParsed = splitModelAndEffort(acc.model);
+    const preferredEffort = acc.effort ?? currentParsed.effort;
+    const chosenEffort = pickBestEffort(targetGroup, preferredEffort);
+    const composedModel = composeModelId(targetGroup, chosenEffort);
+
+    void onUpdateAccount(acc.id, {
+      model: composedModel,
+      effort: targetGroup.suffixEncoded ? chosenEffort : acc.effort,
+    });
+  };
+
+  const handleEffortChange = (
+    acc: AccountProfile,
+    activeGroup: GroupedModel | undefined,
+    value: string
+  ) => {
+    const nextEffort = (value || undefined) as EffortLevel | undefined;
+    if (activeGroup?.suffixEncoded && nextEffort) {
+      const composed = composeModelId(activeGroup, nextEffort);
+      void onUpdateAccount(acc.id, { model: composed, effort: nextEffort });
+    } else {
+      void onUpdateAccount(acc.id, { effort: nextEffort });
+    }
   };
 
   const commitCustomModel = (accId: string) => {
@@ -215,7 +246,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
           <div>
             <strong style={{ fontSize: 13.5 }}>Connected Accounts ({sortedAccounts.length})</strong>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              Switch models, scope, or login profile at any time. Use Default Login for your primary account and Isolated Profile for a second account on the same Gmail.
+              Pick a unique model and reasoning effort independently. Higher priority accounts are chosen first when capability scores tie.
             </div>
           </div>
           <button type="button" className="btn btn-primary btn-sm" onClick={onAddAccount}>
@@ -230,12 +261,17 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
             const feedback = testFeedback[acc.id];
             const isCli = isCliProvider(acc.provider);
             const canToggleProfile = supportsProfileToggle(acc.provider);
-            const knownModels = mergeModels(
+
+            const groupedModels = groupModelsByBase(
+              acc.provider,
               state.discoveredModels?.[acc.provider],
               PROVIDER_MODELS[acc.provider] ?? []
             );
-            const isKnownModel = knownModels.some((m) => m.id === acc.model);
+            const parsedCurrent = splitModelAndEffort(acc.model);
+            const activeGroup = groupedModels.find((g) => g.baseId === parsedCurrent.baseId);
+            const activeEffort = parsedCurrent.effort ?? acc.effort ?? '';
             const isEditingCustom = acc.id in customModelDrafts;
+            const showEffortSelect = Boolean(activeGroup && activeGroup.efforts.length > 0);
 
             return (
               <article key={acc.id} className="card account-card">
@@ -249,7 +285,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                       className="mono"
                       style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 3 }}
                     >
-                      {acc.provider}
+                      {acc.provider} · {acc.model}
                     </div>
                   </div>
 
@@ -296,39 +332,79 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                   </div>
                 </div>
 
-                {/* Inline Model & Scope Switcher */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
+                {/* Inline Unique Model + Effort + Scope Switchers */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: showEffortSelect
+                      ? 'minmax(0, 1.5fr) minmax(88px, 0.75fr) minmax(88px, 0.75fr)'
+                      : 'minmax(0, 1.8fr) minmax(96px, 0.8fr)',
+                    gap: 8,
+                    alignItems: 'end',
+                  }}
+                >
                   <div className="field">
                     <label
                       htmlFor={`model-${acc.id}`}
-                      style={{
-                        fontSize: 11.5,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 5,
-                        color: 'var(--text-secondary)',
-                      }}
+                      style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}
                     >
                       <Cpu size={12} />
                       Active Model
                     </label>
                     <select
                       id={`model-${acc.id}`}
-                      className="select-compact mono"
-                      value={isEditingCustom ? CUSTOM_MODEL_SENTINEL : acc.model}
-                      onChange={(e) => handleModelSelectChange(acc, e.target.value)}
+                      className="select-compact"
+                      value={
+                        isEditingCustom
+                          ? CUSTOM_MODEL_SENTINEL
+                          : activeGroup
+                            ? activeGroup.baseId
+                            : acc.model
+                      }
+                      onChange={(e) =>
+                        handleBaseModelChange(acc, groupedModels, e.target.value)
+                      }
                     >
-                      {!isKnownModel && !isEditingCustom && (
-                        <option value={acc.model}>{acc.model} (Current)</option>
+                      {!activeGroup && !isEditingCustom && (
+                        <option value={acc.model}>{acc.model} (Custom)</option>
                       )}
-                      {knownModels.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label} ({m.id})
+                      {groupedModels.map((g) => (
+                        <option key={g.baseId} value={g.baseId}>
+                          {g.label}
                         </option>
                       ))}
                       <option value={CUSTOM_MODEL_SENTINEL}>Custom model ID...</option>
                     </select>
                   </div>
+
+                  {showEffortSelect && activeGroup && (
+                    <div className="field">
+                      <label
+                        htmlFor={`effort-${acc.id}`}
+                        style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}
+                      >
+                        <Gauge size={12} />
+                        Effort
+                      </label>
+                      <select
+                        id={`effort-${acc.id}`}
+                        className="select-compact"
+                        value={activeEffort}
+                        onChange={(e) =>
+                          handleEffortChange(acc, activeGroup, e.target.value)
+                        }
+                      >
+                        {!activeGroup.suffixEncoded && (
+                          <option value="">Default</option>
+                        )}
+                        {activeGroup.efforts.map((lvl) => (
+                          <option key={lvl} value={lvl}>
+                            {EFFORT_LABELS[lvl]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   <div className="field">
                     <label

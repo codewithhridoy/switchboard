@@ -15,10 +15,18 @@ import {
   Trash2,
   XCircle,
 } from 'lucide-react';
+import {
+  composeModelId,
+  EFFORT_LABELS,
+  groupModelsByBase,
+  pickBestEffort,
+  splitModelAndEffort,
+} from '../../shared/models';
 import { PROVIDER_MODELS, TASK_CATEGORY_META } from '../../shared/presets';
 import {
   AccountScope,
   CreateTaskInput,
+  EffortLevel,
   OrchestratedTask,
   SwitchboardState,
 } from '../../shared/types';
@@ -83,7 +91,8 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   const [workspaceDir, setWorkspaceDir] = useState(state.settings.defaultWorkspaceDir || '');
   const [workspaceScope, setWorkspaceScope] = useState<AccountScope>('any');
   const [forcedAccountId, setForcedAccountId] = useState<string>('');
-  const [forcedModel, setForcedModel] = useState<string>('');
+  const [forcedBaseModel, setForcedBaseModel] = useState<string>('');
+  const [forcedEffort, setForcedEffort] = useState<EffortLevel | ''>('');
   const [autoDecompose, setAutoDecompose] = useState(state.settings.autoDecomposeMultiStep);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
     state.tasks[0]?.id ?? null
@@ -109,6 +118,31 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
     e?.preventDefault();
     const cleaned = prompt.trim();
     if (!cleaned) return;
+    let resolvedForcedModel: string | null = null;
+    let resolvedForcedEffort: EffortLevel | null = null;
+    if (forcedAccountId) {
+      const pinned = state.accounts.find((a) => a.id === forcedAccountId);
+      if (pinned) {
+        const groups = groupModelsByBase(
+          pinned.provider,
+          state.discoveredModels?.[pinned.provider],
+          PROVIDER_MODELS[pinned.provider] ?? []
+        );
+        const baseId = forcedBaseModel || splitModelAndEffort(pinned.model).baseId;
+        const activeGroup = groups.find((g) => g.baseId === baseId);
+        const effortVal = forcedEffort || undefined;
+        if (activeGroup && (forcedBaseModel || effortVal)) {
+          resolvedForcedModel = composeModelId(
+            activeGroup,
+            effortVal ?? splitModelAndEffort(pinned.model).effort ?? pinned.effort
+          );
+          if (!activeGroup.suffixEncoded && effortVal) {
+            resolvedForcedEffort = effortVal;
+          }
+        }
+      }
+    }
+
     const created = await onEnqueueTask({
       prompt: cleaned,
       mode,
@@ -116,7 +150,8 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
       workspaceScope,
       autoDecompose,
       forcedAccountId: forcedAccountId || null,
-      forcedModel: forcedAccountId && forcedModel ? forcedModel : null,
+      forcedModel: resolvedForcedModel,
+      forcedEffort: resolvedForcedEffort,
     });
     setPrompt('');
     if (created) {
@@ -233,7 +268,8 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               value={forcedAccountId}
               onChange={(e) => {
                 setForcedAccountId(e.target.value);
-                setForcedModel('');
+                setForcedBaseModel('');
+                setForcedEffort('');
               }}
             >
               <option value="">Routing: Auto (Best Model)</option>
@@ -241,7 +277,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                 .sort((a, b) => a.priority - b.priority)
                 .map((acc) => (
                   <option key={acc.id} value={acc.id}>
-                    Pin: {acc.name} ({acc.model})
+                    Pin: {acc.name}
                   </option>
                 ))}
             </select>
@@ -249,29 +285,64 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
             {forcedAccountId && (() => {
               const pinned = state.accounts.find((a) => a.id === forcedAccountId);
               if (!pinned) return null;
-              const live = state.discoveredModels?.[pinned.provider] ?? [];
-              const curated = PROVIDER_MODELS[pinned.provider] ?? [];
-              const seen = new Set<string>();
-              const options = [...live, ...curated].filter((m) => {
-                if (seen.has(m.id)) return false;
-                seen.add(m.id);
-                return true;
-              });
+              const groups = groupModelsByBase(
+                pinned.provider,
+                state.discoveredModels?.[pinned.provider],
+                PROVIDER_MODELS[pinned.provider] ?? []
+              );
+              const parsedDefault = splitModelAndEffort(pinned.model);
+              const currentBase = forcedBaseModel || parsedDefault.baseId;
+              const activeGroup = groups.find((g) => g.baseId === currentBase);
               return (
-                <select
-                  className="select-compact mono"
-                  aria-label="Model override"
-                  value={forcedModel}
-                  onChange={(e) => setForcedModel(e.target.value)}
-                  title="Override model for this task only"
-                >
-                  <option value="">Model: Default ({pinned.model})</option>
-                  {options.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label} ({m.id})
+                <>
+                  <select
+                    className="select-compact"
+                    aria-label="Model override"
+                    value={forcedBaseModel}
+                    onChange={(e) => {
+                      const nextBase = e.target.value;
+                      setForcedBaseModel(nextBase);
+                      const nextGroup = groups.find((g) => g.baseId === nextBase);
+                      if (nextGroup && forcedEffort && !nextGroup.efforts.includes(forcedEffort)) {
+                        setForcedEffort(pickBestEffort(nextGroup) ?? '');
+                      }
+                    }}
+                    title="Override model for this task only"
+                  >
+                    <option value="">
+                      Model: {activeGroup?.label ?? parsedDefault.baseId} (Default)
                     </option>
-                  ))}
-                </select>
+                    {groups.map((g) => (
+                      <option key={g.baseId} value={g.baseId}>
+                        {g.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  {activeGroup && activeGroup.efforts.length > 0 && (
+                    <select
+                      className="select-compact"
+                      aria-label="Effort override"
+                      value={forcedEffort}
+                      onChange={(e) => setForcedEffort(e.target.value as EffortLevel | '')}
+                      title="Override reasoning effort for this task"
+                    >
+                      <option value="">
+                        Effort:{' '}
+                        {parsedDefault.effort
+                          ? EFFORT_LABELS[parsedDefault.effort]
+                          : pinned.effort
+                            ? EFFORT_LABELS[pinned.effort]
+                            : 'Default'}
+                      </option>
+                      {activeGroup.efforts.map((lvl) => (
+                        <option key={lvl} value={lvl}>
+                          {EFFORT_LABELS[lvl]}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </>
               );
             })()}
 

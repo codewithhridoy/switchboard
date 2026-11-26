@@ -226,6 +226,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       autoDecompose,
       forcedAccountId: input.forcedAccountId ?? null,
       forcedModel: input.forcedModel?.trim() || null,
+      forcedEffort: input.forcedEffort ?? null,
       category: classification.category,
       categoryConfidence: classification.confidence,
       status: 'queued',
@@ -419,12 +420,15 @@ export class SwitchboardOrchestrator extends EventEmitter {
       }
 
       const { account, reason } = selection;
+      const isPinnedMatch = task.forcedAccountId === account.id;
       const effectiveModel =
-        task.forcedModel && task.forcedAccountId === account.id
-          ? task.forcedModel
-          : account.model;
+        isPinnedMatch && task.forcedModel ? task.forcedModel : account.model;
+      const effectiveEffort =
+        isPinnedMatch && task.forcedEffort ? task.forcedEffort : account.effort;
       const effectiveAccount: AccountProfile =
-        effectiveModel === account.model ? account : { ...account, model: effectiveModel };
+        effectiveModel === account.model && effectiveEffort === account.effort
+          ? account
+          : { ...account, model: effectiveModel, effort: effectiveEffort };
 
       subtask.status = attemptIdx === 1 ? 'running' : 'retrying';
       subtask.startedAt = subtask.startedAt ?? Date.now();
