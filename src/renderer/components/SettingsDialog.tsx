@@ -178,7 +178,7 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="field-row-2">
               <div className="field">
                 <label htmlFor="set-cooldown">Default Cooldown (Minutes)</label>
                 <span className="field-hint">

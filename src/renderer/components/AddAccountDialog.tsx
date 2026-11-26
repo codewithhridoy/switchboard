@@ -158,7 +158,7 @@ export const AddAccountDialog: React.FC<AddAccountDialogProps> = ({
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="field-row-2">
               <div className="field">
                 <label htmlFor="acc-model">Model Identifier</label>
                 <span id="acc-model-hint" className="field-hint">

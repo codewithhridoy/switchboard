@@ -54,7 +54,7 @@ export const RoutingView: React.FC<RoutingViewProps> = ({ state, onUpdateRule })
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div className="field-row-2">
                 <div className="field">
                   <label htmlFor={`primary-${rule.category}`} style={{ fontSize: 11.5 }}>
                     Primary Account
