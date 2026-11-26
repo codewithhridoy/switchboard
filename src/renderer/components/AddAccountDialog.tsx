@@ -27,6 +27,9 @@ export const AddAccountDialog: React.FC<AddAccountDialogProps> = ({
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState(PROVIDER_PRESETS[0].defaultBaseUrl ?? '');
   const [profileDir, setProfileDir] = useState('');
+  const [useDefaultProfile, setUseDefaultProfile] = useState(
+    Boolean(PROVIDER_PRESETS[0].defaultUseDefaultProfile)
+  );
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -58,6 +61,7 @@ export const AddAccountDialog: React.FC<AddAccountDialogProps> = ({
     setBaseUrl(next.defaultBaseUrl ?? '');
     setApiKey('');
     setProfileDir('');
+    setUseDefaultProfile(Boolean(next.defaultUseDefaultProfile));
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -80,6 +84,7 @@ export const AddAccountDialog: React.FC<AddAccountDialogProps> = ({
       apiKey: preset.requiresApiKey ? apiKey.trim() : undefined,
       baseUrl: preset.requiresApiKey ? baseUrl.trim() || preset.defaultBaseUrl : undefined,
       profileDir: preset.supportsIsolatedProfile ? profileDir.trim() || undefined : undefined,
+      useDefaultProfile: preset.supportsIsolatedProfile ? useDefaultProfile : undefined,
     });
     dialogRef.current?.close();
   };
@@ -203,18 +208,32 @@ export const AddAccountDialog: React.FC<AddAccountDialogProps> = ({
 
             {preset.supportsIsolatedProfile && (
               <div className="field">
-                <label htmlFor="acc-profile">Isolated Profile Directory (Optional)</label>
-                <span className="field-hint">
-                  Leave blank to auto-create an isolated folder under ~/.switchboard/profiles/ so you can run two Claude accounts on the same Gmail side by side.
-                </span>
-                <input
-                  id="acc-profile"
-                  className="input-field mono"
-                  type="text"
-                  placeholder="Auto-generated isolated profile directory"
-                  value={profileDir}
-                  onChange={(e) => setProfileDir(e.target.value)}
-                />
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={useDefaultProfile}
+                    onChange={(e) => setUseDefaultProfile(e.target.checked)}
+                  />
+                  Use existing system CLI login (~/.claude / ~/.gemini)
+                </label>
+                {!useDefaultProfile && (
+                  <>
+                    <label htmlFor="acc-profile" style={{ marginTop: 6 }}>
+                      Isolated Profile Directory (Optional)
+                    </label>
+                    <span className="field-hint">
+                      Leave blank to auto-create an isolated folder under ~/.switchboard/profiles/ so you can run two Claude accounts on the same Gmail side by side.
+                    </span>
+                    <input
+                      id="acc-profile"
+                      className="input-field mono"
+                      type="text"
+                      placeholder="Auto-generated isolated profile directory"
+                      value={profileDir}
+                      onChange={(e) => setProfileDir(e.target.value)}
+                    />
+                  </>
+                )}
               </div>
             )}
 

@@ -17,7 +17,12 @@ import {
   XCircle,
 } from 'lucide-react';
 import { PROVIDER_MODELS } from '../../shared/presets';
-import { AccountProfile, AccountScope, SwitchboardState } from '../../shared/types';
+import {
+  AccountProfile,
+  AccountScope,
+  ModelChoice,
+  SwitchboardState,
+} from '../../shared/types';
 
 interface AccountsViewProps {
   state: SwitchboardState;
@@ -33,7 +38,28 @@ interface AccountsViewProps {
 const CUSTOM_MODEL_SENTINEL = '__custom__';
 
 function isCliProvider(provider: AccountProfile['provider']): boolean {
+  return (
+    provider === 'claude-cli' ||
+    provider === 'agy-cli' ||
+    provider === 'gemini-cli' ||
+    provider === 'codex-cli'
+  );
+}
+
+function supportsProfileToggle(provider: AccountProfile['provider']): boolean {
   return provider === 'claude-cli' || provider === 'gemini-cli' || provider === 'codex-cli';
+}
+
+function mergeModels(live: ModelChoice[] | undefined, curated: ModelChoice[]): ModelChoice[] {
+  const seen = new Set<string>();
+  const out: ModelChoice[] = [];
+  for (const item of [...(live ?? []), ...curated]) {
+    if (!seen.has(item.id)) {
+      seen.add(item.id);
+      out.push(item);
+    }
+  }
+  return out;
 }
 
 function formatCooldown(until?: number | null): string | null {
@@ -121,12 +147,12 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
           <div>
             <strong style={{ fontSize: 13.5 }}>Official CLI Runtimes on This Machine</strong>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              Switchboard runs official CLIs with isolated profile folders so Personal & Team accounts never conflict or violate ToS.
+              Uses official CLIs (`claude`, `agy`, `gemini`, `codex`) with live model discovery and isolated profiles for multi-account Claude.
             </div>
           </div>
           <button type="button" className="btn btn-sm" onClick={() => void onRefreshCliHealth()}>
             <RefreshCw size={13} />
-            Re-scan CLIs
+            Re-scan CLIs & Models
           </button>
         </div>
 
@@ -189,7 +215,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
           <div>
             <strong style={{ fontSize: 13.5 }}>Connected Accounts ({sortedAccounts.length})</strong>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              Switch models or priority at any time. Higher priority accounts are chosen first when capability scores tie.
+              Switch models, scope, or login profile at any time. Use Default Login for your primary account and Isolated Profile for a second account on the same Gmail.
             </div>
           </div>
           <button type="button" className="btn btn-primary btn-sm" onClick={onAddAccount}>
@@ -203,7 +229,11 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
             const cooldownText = formatCooldown(acc.cooldownUntil);
             const feedback = testFeedback[acc.id];
             const isCli = isCliProvider(acc.provider);
-            const knownModels = PROVIDER_MODELS[acc.provider] ?? [];
+            const canToggleProfile = supportsProfileToggle(acc.provider);
+            const knownModels = mergeModels(
+              state.discoveredModels?.[acc.provider],
+              PROVIDER_MODELS[acc.provider] ?? []
+            );
             const isKnownModel = knownModels.some((m) => m.id === acc.model);
             const isEditingCustom = acc.id in customModelDrafts;
 
@@ -328,7 +358,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                       type="text"
                       className="input-field mono"
                       style={{ flex: 1 }}
-                      placeholder="Enter exact model ID (e.g. opus, gemini-3.5-flash)"
+                      placeholder="Enter exact model ID (e.g. claude-opus-5-5, gemini-4-neon-high)"
                       value={customModelDrafts[acc.id] ?? ''}
                       onChange={(e) =>
                         setCustomModelDrafts((prev) => ({ ...prev, [acc.id]: e.target.value }))
@@ -370,11 +400,50 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                 <div className="account-meta-box">
                   {isCli ? (
                     <>
-                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                        Isolated Profile Directory
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 8,
+                        }}
+                      >
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                          {acc.provider === 'agy-cli' || acc.useDefaultProfile
+                            ? 'System Default CLI Login'
+                            : 'Isolated Profile Directory'}
+                        </span>
+                        {canToggleProfile && (
+                          <label
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 5,
+                              fontSize: 11,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={Boolean(acc.useDefaultProfile)}
+                              onChange={(e) =>
+                                void onUpdateAccount(acc.id, {
+                                  useDefaultProfile: e.target.checked,
+                                })
+                              }
+                            />
+                            Use default login
+                          </label>
+                        )}
                       </div>
                       <div className="mono" style={{ wordBreak: 'break-all' }}>
-                        {acc.profileDir || 'Default CLI config'}
+                        {acc.provider === 'agy-cli'
+                          ? 'Uses active `agy` Google AI Pro session'
+                          : acc.useDefaultProfile
+                            ? acc.provider === 'claude-cli'
+                              ? '~/.claude (existing logged-in session)'
+                              : 'Default CLI config'
+                            : acc.profileDir || 'Default CLI config'}
                       </div>
                     </>
                   ) : (
@@ -432,7 +501,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                           [acc.id]: {
                             ok: res.ok,
                             message: res.ok
-                              ? `Opened Terminal to sign in (${acc.name})`
+                              ? `Opened Terminal: ${res.command}`
                               : res.error || 'Could not launch terminal',
                           },
                         }));

@@ -28,9 +28,10 @@ export class GeminiCliRunner implements ProviderRunner {
       ...process.env,
       PATH: buildEnrichedPath(),
       NO_COLOR: '1',
+      GEMINI_CLI_TRUST_WORKSPACE: 'true',
     };
 
-    if (req.account.profileDir) {
+    if (!req.account.useDefaultProfile && req.account.profileDir) {
       fs.mkdirSync(req.account.profileDir, { recursive: true });
       env.GEMINI_CLI_HOME = req.account.profileDir;
       env.XDG_CONFIG_HOME = path.join(req.account.profileDir, '.config');

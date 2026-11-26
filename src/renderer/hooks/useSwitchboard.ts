@@ -42,6 +42,7 @@ function createBrowserPreviewState(): SwitchboardState {
         installHint: 'npm install -g @openai/codex',
       },
     ],
+    discoveredModels: {},
     queueRunning: false,
   };
 }

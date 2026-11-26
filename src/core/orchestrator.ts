@@ -8,6 +8,7 @@ import {
   CreateAccountInput,
   CreateTaskInput,
   ExecutionAttempt,
+  ModelChoice,
   OrchestratedTask,
   ProviderKind,
   RoutingRule,
@@ -17,7 +18,7 @@ import {
 } from '../shared/types';
 import { classifyPrompt, decomposePrompt, deriveTitle } from './classifier';
 import { getNextCooldownExpiry, selectAccountForTask } from './router';
-import { checkCliHealth } from './runners/cliEnv';
+import { checkCliHealth, discoverLiveModels } from './runners/cliEnv';
 import { getRunnerForProvider } from './runners/index';
 import { ProviderRunner } from './runners/types';
 import { SwitchboardStore } from './store';
@@ -31,6 +32,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
   private readonly store: SwitchboardStore;
   private readonly runnerFactory: (provider: ProviderKind) => ProviderRunner;
   private cliHealth: CliHealthInfo[] = [];
+  private discoveredModels: Partial<Record<ProviderKind, ModelChoice[]>> = {};
   private queueRunning = false;
   private activeAbortController: AbortController | null = null;
   private activeTaskId: string | null = null;
@@ -56,7 +58,12 @@ export class SwitchboardOrchestrator extends EventEmitter {
   }
 
   public async refreshCliHealth(): Promise<CliHealthInfo[]> {
-    this.cliHealth = await checkCliHealth();
+    const [health, models] = await Promise.all([
+      checkCliHealth(),
+      discoverLiveModels(),
+    ]);
+    this.cliHealth = health;
+    this.discoveredModels = models;
     this.emitState();
     return this.cliHealth;
   }
@@ -83,6 +90,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       tasks: data.tasks,
       settings: data.settings,
       cliHealth: this.cliHealth,
+      discoveredModels: this.discoveredModels,
       queueRunning: this.queueRunning,
     };
   }
@@ -115,6 +123,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       tags: input.tags?.length ? input.tags : (preset?.defaultTags ?? [input.provider]),
       strengths: input.strengths ?? preset?.defaultStrengths ?? {},
       profileDir,
+      useDefaultProfile: input.useDefaultProfile ?? preset?.defaultUseDefaultProfile ?? false,
       cliPath: input.cliPath?.trim() || undefined,
       extraArgs: input.extraArgs,
       apiKey: input.apiKey?.trim() || undefined,

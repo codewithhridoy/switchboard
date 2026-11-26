@@ -1,5 +1,6 @@
 export type ProviderKind =
   | 'claude-cli'
+  | 'agy-cli'
   | 'gemini-cli'
   | 'codex-cli'
   | 'anthropic-api'
@@ -35,6 +36,8 @@ export interface AccountProfile {
   strengths: Partial<Record<TaskCategory, number>>;
   /** For CLI providers: isolated config directory (e.g. CLAUDE_CONFIG_DIR / GEMINI_CLI_HOME) */
   profileDir?: string;
+  /** When true, uses the system's default CLI login (~/.claude, ~/.gemini) instead of an isolated profile dir */
+  useDefaultProfile?: boolean;
   /** Optional custom executable path if CLI is not on PATH */
   cliPath?: string;
   /** Optional extra CLI arguments */
@@ -152,12 +155,18 @@ export interface CliHealthInfo {
   installHint: string;
 }
 
+export interface ModelChoice {
+  id: string;
+  label: string;
+}
+
 export interface SwitchboardState {
   accounts: AccountProfile[];
   routingRules: RoutingRule[];
   tasks: OrchestratedTask[];
   settings: AppSettings;
   cliHealth: CliHealthInfo[];
+  discoveredModels: Partial<Record<ProviderKind, ModelChoice[]>>;
   queueRunning: boolean;
 }
 
@@ -198,6 +207,7 @@ export interface CreateAccountInput {
   tags?: string[];
   strengths?: Partial<Record<TaskCategory, number>>;
   profileDir?: string;
+  useDefaultProfile?: boolean;
   cliPath?: string;
   extraArgs?: string[];
   apiKey?: string;

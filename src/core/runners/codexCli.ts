@@ -29,7 +29,7 @@ export class CodexCliRunner implements ProviderRunner {
       NO_COLOR: '1',
     };
 
-    if (req.account.profileDir) {
+    if (!req.account.useDefaultProfile && req.account.profileDir) {
       fs.mkdirSync(req.account.profileDir, { recursive: true });
       env.CODEX_HOME = req.account.profileDir;
     }

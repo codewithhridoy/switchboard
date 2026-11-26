@@ -249,7 +249,14 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
             {forcedAccountId && (() => {
               const pinned = state.accounts.find((a) => a.id === forcedAccountId);
               if (!pinned) return null;
-              const options = PROVIDER_MODELS[pinned.provider] ?? [];
+              const live = state.discoveredModels?.[pinned.provider] ?? [];
+              const curated = PROVIDER_MODELS[pinned.provider] ?? [];
+              const seen = new Set<string>();
+              const options = [...live, ...curated].filter((m) => {
+                if (seen.has(m.id)) return false;
+                seen.add(m.id);
+                return true;
+              });
               return (
                 <select
                   className="select-compact mono"

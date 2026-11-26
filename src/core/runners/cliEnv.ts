@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { CliHealthInfo, ProviderKind } from '../../shared/types';
+import { CliHealthInfo, ModelChoice, ProviderKind } from '../../shared/types';
 
 const execFileAsync = promisify(execFile);
 
@@ -37,7 +37,6 @@ export function buildEnrichedPath(basePath = process.env.PATH ?? ''): string {
       '/bin'
     );
 
-    // Include latest nvm node bin if present
     const nvmVersions = path.join(home, '.nvm', 'versions', 'node');
     try {
       if (fs.existsSync(nvmVersions)) {
@@ -74,8 +73,7 @@ export function resolveExecutable(binary: string, customPath?: string): string |
 
   const envPath = buildEnrichedPath();
   const sep = process.platform === 'win32' ? ';' : ':';
-  const exts =
-    process.platform === 'win32' ? ['', '.cmd', '.exe', '.bat'] : [''];
+  const exts = process.platform === 'win32' ? ['', '.cmd', '.exe', '.bat'] : [''];
 
   for (const dir of envPath.split(sep)) {
     if (!dir) continue;
@@ -105,6 +103,11 @@ const CLI_SPECS: CliSpec[] = [
     provider: 'claude-cli',
     binary: 'claude',
     installHint: 'npm install -g @anthropic-ai/claude-code',
+  },
+  {
+    provider: 'agy-cli',
+    binary: 'agy',
+    installHint: 'Install Google Antigravity CLI from https://antigravity.google',
   },
   {
     provider: 'gemini-cli',
@@ -159,4 +162,72 @@ export async function checkCliHealth(): Promise<CliHealthInfo[]> {
   );
 
   return results;
+}
+
+/**
+ * Dynamically queries installed CLIs (e.g. `agy models`, `gemini --list-models`)
+ * to surface the exact latest models available on the user's machine.
+ */
+export async function discoverLiveModels(): Promise<
+  Partial<Record<ProviderKind, ModelChoice[]>>
+> {
+  const enrichedPath = buildEnrichedPath();
+  const discovered: Partial<Record<ProviderKind, ModelChoice[]>> = {};
+
+  const agyPath = resolveExecutable('agy');
+  if (agyPath) {
+    try {
+      const { stdout } = await execFileAsync(agyPath, ['models'], {
+        timeout: 10_000,
+        env: { ...process.env, PATH: enrichedPath, NO_COLOR: '1' },
+      });
+      const parsed: ModelChoice[] = [];
+      const seen = new Set<string>();
+      for (const rawLine of stdout.split(/\r?\n/)) {
+        const clean = stripAnsi(rawLine).replace(/^.*\r/, '').trim();
+        if (!clean || clean.startsWith('Fetching')) continue;
+        const match = clean.match(/^([a-z0-9][a-z0-9._-]{2,})\s{2,}(.+)$/i);
+        if (match && !seen.has(match[1])) {
+          seen.add(match[1]);
+          parsed.push({ id: match[1].trim(), label: match[2].trim() });
+        }
+      }
+      if (parsed.length > 0) {
+        discovered['agy-cli'] = parsed;
+      }
+    } catch {
+      // Fall back to curated list
+    }
+  }
+
+  const geminiPath = resolveExecutable('gemini');
+  if (geminiPath) {
+    try {
+      const { stdout } = await execFileAsync(geminiPath, ['--list-models'], {
+        timeout: 6_000,
+        env: { ...process.env, PATH: enrichedPath, NO_COLOR: '1' },
+      });
+      const parsed: ModelChoice[] = [];
+      const seen = new Set<string>();
+      for (const rawLine of stdout.split(/\r?\n/)) {
+        const clean = stripAnsi(rawLine).trim();
+        const match = clean.match(/^([a-z0-9][a-z0-9._-]+)\s+\(([^)]+)\)$/i);
+        if (match && !seen.has(match[1])) {
+          seen.add(match[1]);
+          parsed.push({ id: match[1].trim(), label: match[2].trim() });
+        }
+      }
+      if (parsed.length > 0) {
+        discovered['gemini-cli'] = parsed;
+      }
+    } catch {
+      // Fall back to curated list
+    }
+  }
+
+  return discovered;
+}
+
+function stripAnsi(input: string): string {
+  return input.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
 }

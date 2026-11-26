@@ -11,10 +11,13 @@ export interface TerminalLaunchResult {
 
 /**
  * Opens the user's native OS terminal pre-configured with the account's isolated
- * profile environment variable so they can authenticate natively via the official CLI.
+ * profile environment variable (or default system profile) so they can authenticate
+ * natively via the official CLI.
  */
 export function launchAccountCliLogin(account: AccountProfile): Promise<TerminalLaunchResult> {
-  const profileDir = account.profileDir;
+  const useIsolated = !account.useDefaultProfile && Boolean(account.profileDir);
+  const profileDir = useIsolated ? account.profileDir : undefined;
+
   if (profileDir) {
     fs.mkdirSync(profileDir, { recursive: true });
   }
@@ -23,29 +26,29 @@ export function launchAccountCliLogin(account: AccountProfile): Promise<Terminal
   let winCmd = '';
 
   if (account.provider === 'claude-cli') {
-    const dir = profileDir ?? '';
-    unixCmd = dir
-      ? `CLAUDE_CONFIG_DIR=${shellQuote(dir)} claude`
-      : 'claude';
-    winCmd = dir
-      ? `set "CLAUDE_CONFIG_DIR=${dir}" && claude`
-      : 'claude';
+    unixCmd = profileDir
+      ? `CLAUDE_CONFIG_DIR=${shellQuote(profileDir)} claude auth login`
+      : 'claude auth login';
+    winCmd = profileDir
+      ? `set "CLAUDE_CONFIG_DIR=${profileDir}" && claude auth login`
+      : 'claude auth login';
+  } else if (account.provider === 'agy-cli') {
+    unixCmd = 'agy';
+    winCmd = 'agy';
   } else if (account.provider === 'gemini-cli') {
-    const dir = profileDir ?? '';
-    const xdg = dir ? path.join(dir, '.config') : '';
-    unixCmd = dir
-      ? `GEMINI_CLI_HOME=${shellQuote(dir)} XDG_CONFIG_HOME=${shellQuote(xdg)} gemini`
+    const xdg = profileDir ? path.join(profileDir, '.config') : '';
+    unixCmd = profileDir
+      ? `GEMINI_CLI_HOME=${shellQuote(profileDir)} XDG_CONFIG_HOME=${shellQuote(xdg)} gemini`
       : 'gemini';
-    winCmd = dir
-      ? `set "GEMINI_CLI_HOME=${dir}" && gemini`
+    winCmd = profileDir
+      ? `set "GEMINI_CLI_HOME=${profileDir}" && gemini`
       : 'gemini';
   } else if (account.provider === 'codex-cli') {
-    const dir = profileDir ?? '';
-    unixCmd = dir
-      ? `CODEX_HOME=${shellQuote(dir)} codex login`
+    unixCmd = profileDir
+      ? `CODEX_HOME=${shellQuote(profileDir)} codex login`
       : 'codex login';
-    winCmd = dir
-      ? `set "CODEX_HOME=${dir}" && codex login`
+    winCmd = profileDir
+      ? `set "CODEX_HOME=${profileDir}" && codex login`
       : 'codex login';
   } else {
     return Promise.resolve({
@@ -60,7 +63,7 @@ export function launchAccountCliLogin(account: AccountProfile): Promise<Terminal
   return new Promise((resolve) => {
     try {
       if (process.platform === 'darwin') {
-        const banner = `echo "=== Switchboard Isolated Login: ${account.name.replace(/"/g, '\\"')} ===" && ${unixCmd}`;
+        const banner = `echo "=== Switchboard Sign-In: ${account.name.replace(/"/g, '\\"')} ===" && ${unixCmd}`;
         const appleScript = `tell application "Terminal"
   activate
   do script "${banner.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"
@@ -84,7 +87,6 @@ end tell`;
         return;
       }
 
-      // Linux: try common terminal emulators
       const script = `${unixCmd}; exec bash`;
       const child = spawn(
         'sh',
