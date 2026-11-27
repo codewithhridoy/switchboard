@@ -77,6 +77,7 @@ export class AgyCliRunner implements ProviderRunner {
       signal: req.signal,
       onChunk: req.onChunk,
       onStatus: req.onStatus,
+      onActivity: req.onActivity,
       parseLine: parseAgyStreamLine,
       providerLabel: 'Google Antigravity CLI (agy)',
     });

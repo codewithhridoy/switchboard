@@ -1,12 +1,95 @@
+import { SubtaskActivityStep } from '../../shared/types';
 import { RunUsage } from './types';
+
+export type ParsedActivityStep = Omit<SubtaskActivityStep, 'startedAt'>;
 
 export interface ParsedStreamDelta {
   textDelta?: string;
+  thinkingDelta?: string;
   statusText?: string;
+  activityStep?: ParsedActivityStep;
   finalText?: string;
   usage?: RunUsage;
   errorText?: string;
   permissionDenied?: boolean;
+}
+
+function compactPath(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw.trim()) return '';
+  const parts = raw.trim().replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts.length <= 3 ? parts.join('/') : parts.slice(-3).join('/');
+}
+
+function summarizeToolAction(toolName: string, params: Record<string, any> | undefined): {
+  label: string;
+  detail?: string;
+} {
+  const lower = toolName.toLowerCase();
+  const cmd = params?.CommandLine ?? params?.command;
+  if (typeof cmd === 'string' && cmd.trim()) {
+    const clean = cmd.trim().replace(/\s+/g, ' ');
+    return {
+      label: `Run: ${clean.slice(0, 80)}${clean.length > 80 ? '…' : ''}`,
+    };
+  }
+
+  const filePath =
+    params?.TargetFile ??
+    params?.AbsolutePath ??
+    params?.Path ??
+    params?.file_path ??
+    params?.path ??
+    params?.DirectoryPath ??
+    params?.SearchPath;
+  const shortPath = compactPath(filePath);
+
+  if (lower.includes('read') || lower.includes('view_file')) {
+    return { label: shortPath ? `Read ${shortPath}` : `Read file` };
+  }
+  if (lower.includes('write')) {
+    return { label: shortPath ? `Write ${shortPath}` : `Write file` };
+  }
+  if (lower.includes('edit') || lower.includes('replace')) {
+    return { label: shortPath ? `Edit ${shortPath}` : `Edit file` };
+  }
+  if (lower.includes('list_dir') || lower.includes('find') || lower.includes('glob')) {
+    const pattern = params?.Pattern ?? params?.pattern;
+    return {
+      label: shortPath
+        ? `Explore ${shortPath}`
+        : typeof pattern === 'string'
+          ? `Find ${pattern}`
+          : `List files`,
+    };
+  }
+  if (lower.includes('grep') || lower.includes('search')) {
+    const query = params?.Query ?? params?.pattern ?? params?.query;
+    return {
+      label:
+        typeof query === 'string' && query.trim()
+          ? `Search "${query.trim().slice(0, 48)}"${shortPath ? ` in ${shortPath}` : ''}`
+          : `Search codebase`,
+    };
+  }
+
+  return {
+    label: shortPath ? `${toolName}: ${shortPath}` : `Tool: ${toolName}`,
+  };
+}
+
+function summarizeToolOutput(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l &&
+        !/^(?:Created At|Completed At|Command output):/i.test(l)
+    );
+  if (lines.length === 0) return undefined;
+  const first = lines[0];
+  return first.length > 110 ? `${first.slice(0, 107)}…` : first;
 }
 
 /**
@@ -31,7 +114,17 @@ export function parseClaudeStreamLine(line: string): ParsedStreamDelta | null {
         return { statusText: 'Thinking...' };
       }
       if (ev.content_block?.type === 'tool_use') {
-        return { statusText: `Running tool: ${ev.content_block.name || 'tool'}...` };
+        const name = ev.content_block.name || 'tool';
+        const stepId = `claude-tool-${ev.content_block.id || ev.index || Date.now()}`;
+        return {
+          statusText: `Running tool: ${name}...`,
+          activityStep: {
+            id: stepId,
+            kind: 'tool',
+            label: `Running ${name}...`,
+            status: 'running',
+          },
+        };
       }
       if (ev.content_block?.type === 'text') {
         return { statusText: 'Streaming response...' };
@@ -42,13 +135,57 @@ export function parseClaudeStreamLine(line: string): ParsedStreamDelta | null {
         return { textDelta: ev.delta.text };
       }
       if (ev.delta.type === 'thinking_delta') {
+        const thought = typeof ev.delta.thinking === 'string' ? ev.delta.thinking : undefined;
         const est = ev.delta.estimated_tokens;
         return {
+          thinkingDelta: thought,
           statusText: est ? `Thinking (${est} tokens)...` : 'Thinking...',
         };
       }
     }
     return null;
+  }
+
+  // Complete assistant tool_use blocks carry the exact file paths / commands
+  if (obj.type === 'assistant' && Array.isArray(obj.message?.content)) {
+    const toolBlocks = obj.message.content.filter((b: any) => b?.type === 'tool_use');
+    if (toolBlocks.length > 0) {
+      const lastTool = toolBlocks[toolBlocks.length - 1];
+      const summary = summarizeToolAction(lastTool.name || 'tool', lastTool.input);
+      return {
+        statusText: summary.label,
+        activityStep: {
+          id: `claude-tool-${lastTool.id || 'active'}`,
+          kind: 'tool',
+          label: summary.label,
+          detail: summary.detail,
+          status: 'running',
+        },
+      };
+    }
+  }
+
+  // Tool results mark tool steps as done or error
+  if (obj.type === 'user' && Array.isArray(obj.message?.content)) {
+    const results = obj.message.content.filter((b: any) => b?.type === 'tool_result');
+    if (results.length > 0) {
+      const lastRes = results[results.length - 1];
+      const textContent =
+        typeof lastRes.content === 'string'
+          ? lastRes.content
+          : Array.isArray(lastRes.content)
+            ? lastRes.content.map((c: any) => c?.text || '').join('\n')
+            : '';
+      return {
+        activityStep: {
+          id: `claude-tool-${lastRes.tool_use_id || 'active'}`,
+          kind: 'tool',
+          label: '',
+          detail: summarizeToolOutput(textContent),
+          status: lastRes.is_error ? 'error' : 'done',
+        },
+      };
+    }
   }
 
   if (obj.type === 'system') {
@@ -100,10 +237,7 @@ export function parseClaudeStreamLine(line: string): ParsedStreamDelta | null {
       };
     }
 
-    return {
-      finalText,
-      usage,
-    };
+    return { finalText, usage };
   }
 
   return null;
@@ -125,43 +259,93 @@ export function parseAgyStreamLine(line: string): ParsedStreamDelta | null {
 
   if (obj.event === 'init') {
     const model = obj.init?.model ? ` (${obj.init.model})` : '';
-    return { statusText: `Connected${model} · Thinking...` };
+    return {
+      statusText: `Connected${model} · Thinking...`,
+      activityStep: {
+        id: 'agy-init',
+        kind: 'info',
+        label: `Connected${model}`,
+        status: 'done',
+      },
+    };
   }
 
   if (obj.event === 'step_update' && obj.step_update) {
     const su = obj.step_update;
+    const stepId = `agy-step-${su.step_index ?? 'x'}`;
+
+    if (typeof su.thinking_delta === 'string' && su.thinking_delta.length > 0) {
+      return {
+        thinkingDelta: su.thinking_delta,
+        statusText: 'Thinking...',
+      };
+    }
+
     if (typeof su.text_delta === 'string' && su.text_delta.length > 0) {
       return {
         textDelta: su.text_delta,
         statusText: su.state === 'ACTIVE' ? 'Streaming response...' : undefined,
       };
     }
+
     if (su.step_type === 'tool') {
       const toolName = su.tool_name || su.tool_info?.name || 'tool';
+      const summary = summarizeToolAction(toolName, su.tool_info?.parameters);
+      const durationSec =
+        typeof su.duration_seconds === 'number'
+          ? Number(su.duration_seconds.toFixed(1))
+          : undefined;
+
       if (su.state === 'ACTIVE') {
-        const cmd = su.tool_info?.parameters?.CommandLine;
-        if (typeof cmd === 'string' && cmd.trim()) {
-          const compact = cmd.trim().replace(/\s+/g, ' ').slice(0, 64);
-          return { statusText: `Running: ${compact}${cmd.trim().length > 64 ? '…' : ''}` };
-        }
-        return { statusText: `Running tool: ${toolName}...` };
+        return {
+          statusText: summary.label,
+          activityStep: {
+            id: stepId,
+            kind: 'tool',
+            label: summary.label,
+            detail: summary.detail,
+            status: 'running',
+          },
+        };
+      }
+      if (su.state === 'DONE') {
+        return {
+          activityStep: {
+            id: stepId,
+            kind: 'tool',
+            label: summary.label,
+            detail: summarizeToolOutput(su.tool_info?.output) ?? summary.detail,
+            status: 'done',
+            durationSec,
+          },
+        };
       }
       if (su.state === 'ERROR') {
         const errMsg = su.tool_info?.error?.message;
-        if (typeof errMsg === 'string' && /permission/i.test(errMsg)) {
-          return { statusText: `Tool permission blocked (${toolName})...` };
-        }
+        return {
+          statusText:
+            typeof errMsg === 'string' && /permission/i.test(errMsg)
+              ? `Tool permission blocked (${toolName})...`
+              : `Tool error (${toolName})`,
+          activityStep: {
+            id: stepId,
+            kind: 'tool',
+            label: summary.label,
+            detail: typeof errMsg === 'string' ? errMsg.slice(0, 120) : 'Tool failed',
+            status: 'error',
+            durationSec,
+          },
+        };
       }
       return null;
     }
+
+    if (su.step_type === 'agent_response' && su.state === 'ACTIVE') {
+      return { statusText: 'Thinking...' };
+    }
     if (su.step_type && su.step_type !== 'user_input' && su.state === 'ACTIVE') {
       const niceType = String(su.step_type).replace(/_/g, ' ');
-      return {
-        statusText:
-          su.step_type === 'agent_response'
-            ? 'Thinking...'
-            : `Working: ${niceType}...`,
-      };
+      return { statusText: `Working: ${niceType}...` };
     }
     return null;
   }
@@ -195,7 +379,11 @@ export function parseAgyStreamLine(line: string): ParsedStreamDelta | null {
           r.denied_actions
             .map((d: any) => {
               const label = d?.display_name || d?.action;
-              if (d?.display_name && d?.action && d.display_name.toLowerCase() !== d.action.toLowerCase()) {
+              if (
+                d?.display_name &&
+                d?.action &&
+                d.display_name.toLowerCase() !== d.action.toLowerCase()
+              ) {
                 return `${d.display_name} (${d.action})`;
               }
               return label || 'tool';
@@ -210,10 +398,7 @@ export function parseAgyStreamLine(line: string): ParsedStreamDelta | null {
       };
     }
 
-    return {
-      finalText: responseText,
-      usage,
-    };
+    return { finalText: responseText, usage };
   }
 
   return null;

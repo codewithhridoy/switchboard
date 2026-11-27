@@ -686,6 +686,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
         sub.status = 'pending';
         sub.error = undefined;
         sub.liveStatus = undefined;
+        sub.activityLog = [];
         sub.output = '';
         sub.completedAt = undefined;
       }
@@ -924,6 +925,39 @@ export class SwitchboardOrchestrator extends EventEmitter {
             subtaskId: subtask.id,
             statusText,
             timestamp: Date.now(),
+          });
+        },
+        onActivity: (step) => {
+          const list = (subtask.activityLog = subtask.activityLog ?? []);
+          const existing = list.find((s) => s.id === step.id);
+          const now = Date.now();
+          let updated;
+          if (existing) {
+            existing.label = step.label || existing.label;
+            if (step.detail !== undefined) existing.detail = step.detail;
+            existing.status = step.status;
+            if (step.durationSec !== undefined) existing.durationSec = step.durationSec;
+            else if (step.status !== 'running' && !existing.durationSec) {
+              existing.durationSec = Number(((now - existing.startedAt) / 1000).toFixed(1));
+            }
+            updated = { ...existing };
+          } else {
+            updated = {
+              ...step,
+              label: step.label || 'Working...',
+              startedAt: now,
+            };
+            list.push(updated);
+            if (list.length > 60) {
+              subtask.activityLog = list.slice(-60);
+            }
+          }
+          this.emitEvent({
+            type: 'subtask-activity',
+            taskId: task.id,
+            subtaskId: subtask.id,
+            activityStep: updated,
+            timestamp: now,
           });
         },
         onChunk: (chunk, stream) => {

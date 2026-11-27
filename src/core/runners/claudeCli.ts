@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { SubtaskActivityStep } from '../../shared/types';
 import { detectRateLimit } from '../rateLimit';
 import { buildEnrichedPath, resolveExecutable } from './cliEnv';
 import { ParsedStreamDelta, parseClaudeStreamLine } from './streamParsers';
@@ -88,6 +89,7 @@ export class ClaudeCliRunner implements ProviderRunner {
       signal: req.signal,
       onChunk: req.onChunk,
       onStatus: req.onStatus,
+      onActivity: req.onActivity,
       parseLine: parseClaudeStreamLine,
       providerLabel: 'Claude Code CLI',
     });
@@ -102,12 +104,14 @@ export function spawnNdjsonCliProcess(opts: {
   signal: AbortSignal;
   onChunk: (chunk: string, stream: 'stdout' | 'stderr' | 'system') => void;
   onStatus?: (statusText: string) => void;
+  onActivity?: (step: Omit<SubtaskActivityStep, 'startedAt'>) => void;
   parseLine: (line: string) => ParsedStreamDelta | null;
   providerLabel: string;
 }): Promise<RunResult> {
   return new Promise((resolve) => {
     let stderr = '';
     let streamedText = '';
+    let thinkingBuffer = '';
     let finalText = '';
     let errorText = '';
     let permissionDenied = false;
@@ -161,7 +165,30 @@ export function spawnNdjsonCliProcess(opts: {
       if (parsed.statusText) {
         opts.onStatus?.(parsed.statusText);
       }
+      if (parsed.thinkingDelta) {
+        thinkingBuffer = (thinkingBuffer + parsed.thinkingDelta).slice(-420);
+        opts.onActivity?.({
+          id: 'live-thinking',
+          kind: 'thinking',
+          label: 'Thinking',
+          detail: thinkingBuffer.trim(),
+          status: 'running',
+        });
+      }
+      if (parsed.activityStep) {
+        opts.onActivity?.(parsed.activityStep);
+      }
       if (parsed.textDelta) {
+        if (thinkingBuffer) {
+          opts.onActivity?.({
+            id: 'live-thinking',
+            kind: 'thinking',
+            label: 'Thought process',
+            detail: thinkingBuffer.trim(),
+            status: 'done',
+          });
+          thinkingBuffer = '';
+        }
         streamedText += parsed.textDelta;
         opts.onChunk(parsed.textDelta, 'stdout');
       }

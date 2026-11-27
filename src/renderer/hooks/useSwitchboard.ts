@@ -142,6 +142,34 @@ export function useSwitchboard() {
         return;
       }
 
+      if (event.type === 'subtask-activity' && event.taskId && event.subtaskId && event.activityStep) {
+        const incoming = event.activityStep;
+        setState((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            tasks: prev.tasks.map((t) =>
+              t.id !== event.taskId
+                ? t
+                : {
+                    ...t,
+                    subtasks: t.subtasks.map((s) => {
+                      if (s.id !== event.subtaskId) return s;
+                      const prevLog = s.activityLog ?? [];
+                      const idx = prevLog.findIndex((item) => item.id === incoming.id);
+                      const nextLog =
+                        idx >= 0
+                          ? prevLog.map((item, i) => (i === idx ? { ...item, ...incoming, label: incoming.label || item.label } : item))
+                          : [...prevLog, incoming].slice(-60);
+                      return { ...s, activityLog: nextLog };
+                    }),
+                  }
+            ),
+          };
+        });
+        return;
+      }
+
       if (event.type === 'failover-triggered') {
         const msg = event.toAccountName
           ? `Limit hit on ${event.fromAccountName} → switched to ${event.toAccountName}`

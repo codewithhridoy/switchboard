@@ -1,4 +1,9 @@
-import { AccountProfile, CodingPermissionMode, TaskAttachment } from '../../shared/types';
+import {
+  AccountProfile,
+  CodingPermissionMode,
+  SubtaskActivityStep,
+  TaskAttachment,
+} from '../../shared/types';
 
 export interface RunRequest {
   account: AccountProfile;
@@ -11,6 +16,7 @@ export interface RunRequest {
   signal: AbortSignal;
   onChunk: (chunk: string, stream: 'stdout' | 'stderr' | 'system') => void;
   onStatus?: (statusText: string) => void;
+  onActivity?: (step: Omit<SubtaskActivityStep, 'startedAt'>) => void;
 }
 
 export interface RunUsage {

@@ -3,6 +3,7 @@ import { ArrowRight, Copy, RefreshCw, Square, Trash2 } from 'lucide-react';
 import { TASK_CATEGORY_META } from '../../../shared/presets';
 import { CodingPermissionMode, OrchestratedTask, Subtask } from '../../../shared/types';
 import { MarkdownView } from '../MarkdownView';
+import { LiveActivityFeed } from './LiveActivityFeed';
 import { StatusIcon } from './StatusIcon';
 
 interface SubtaskCardProps {
@@ -135,36 +136,18 @@ export const SubtaskCard: React.FC<SubtaskCardProps> = ({
         </div>
       )}
 
-      {isRunning && sub.output && (
-        <div className="streaming-status-bar" role="status" aria-live="polite">
-          <span className="thinking-pill" style={{ fontSize: 11.5 }}>
-            <span className="thinking-orb" />
-            <span>{sub.liveStatus || 'Streaming response...'}</span>
-          </span>
-          {elapsedSec && <span className="mono">{elapsedSec}s</span>}
-        </div>
-      )}
+      <LiveActivityFeed
+        steps={sub.activityLog ?? []}
+        isRunning={isRunning}
+        liveStatus={sub.liveStatus || `Thinking with ${sub.assignedAccountName ?? 'model'}...`}
+        elapsedSec={elapsedSec}
+      />
 
-      {isRunning && !sub.output ? (
-        <div className="live-thinking-box" role="status" aria-live="polite">
-          <div className="thinking-status-row">
-            <span className="thinking-pill">
-              <span className="thinking-orb" />
-              <span>{sub.liveStatus || `Thinking with ${sub.assignedAccountName ?? 'model'}...`}</span>
-            </span>
-            {elapsedSec && <span className="mono">{elapsedSec}s</span>}
-          </div>
-          <div className="shimmer-lines" aria-hidden="true">
-            <div className="shimmer-line" style={{ width: '92%' }} />
-            <div className="shimmer-line" style={{ width: '78%' }} />
-            <div className="shimmer-line" style={{ width: '61%' }} />
-          </div>
-        </div>
-      ) : sub.output ? (
+      {sub.output ? (
         <div className="assistant-response-body">
           <MarkdownView text={sub.output} streaming={isRunning} />
         </div>
-      ) : (
+      ) : !isRunning ? (
         <div
           style={{
             padding: '14px 16px',
@@ -177,7 +160,7 @@ export const SubtaskCard: React.FC<SubtaskCardProps> = ({
             ? 'Queued — waiting for previous step...'
             : sub.error || 'No output.'}
         </div>
-      )}
+      ) : null}
     </article>
   );
 };

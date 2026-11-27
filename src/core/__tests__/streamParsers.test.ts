@@ -79,6 +79,7 @@ describe('NDJSON stream parsers', () => {
       JSON.stringify({
         event: 'step_update',
         step_update: {
+          step_index: 2,
           step_type: 'tool',
           state: 'ACTIVE',
           tool_name: 'run_command',
@@ -90,6 +91,35 @@ describe('NDJSON stream parsers', () => {
       })
     );
     expect(toolStep?.statusText).toContain('git status -sb');
+    expect(toolStep?.activityStep).toMatchObject({
+      id: 'agy-step-2',
+      kind: 'tool',
+      status: 'running',
+    });
+
+    const toolDone = parseAgyStreamLine(
+      JSON.stringify({
+        event: 'step_update',
+        step_update: {
+          step_index: 2,
+          step_type: 'tool',
+          state: 'DONE',
+          tool_name: 'run_command',
+          duration_seconds: 1.42,
+          tool_info: {
+            name: 'run_command',
+            parameters: { CommandLine: 'git status -sb' },
+            output: '## main\n M README.md',
+          },
+        },
+      })
+    );
+    expect(toolDone?.activityStep).toMatchObject({
+      id: 'agy-step-2',
+      status: 'done',
+      durationSec: 1.4,
+      detail: '## main',
+    });
 
     const deniedResult = parseAgyStreamLine(
       JSON.stringify({

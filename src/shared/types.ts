@@ -218,6 +218,16 @@ export interface ExecutionAttempt {
   outputPreview?: string;
 }
 
+export interface SubtaskActivityStep {
+  id: string;
+  kind: 'tool' | 'thinking' | 'info';
+  label: string;
+  detail?: string;
+  status: 'running' | 'done' | 'error';
+  startedAt: number;
+  durationSec?: number;
+}
+
 export interface Subtask {
   id: string;
   index: number;
@@ -232,6 +242,7 @@ export interface Subtask {
   attempts: ExecutionAttempt[];
   output: string;
   liveStatus?: string;
+  activityLog?: SubtaskActivityStep[];
   systemLog?: string;
   error?: string;
   startedAt?: number;
@@ -357,6 +368,7 @@ export interface TaskStreamEvent {
     | 'state-updated'
     | 'subtask-chunk'
     | 'subtask-status'
+    | 'subtask-activity'
     | 'failover-triggered'
     | 'task-completed'
     | 'task-failed';
@@ -364,6 +376,7 @@ export interface TaskStreamEvent {
   subtaskId?: string;
   chunk?: string;
   statusText?: string;
+  activityStep?: SubtaskActivityStep;
   stream?: 'stdout' | 'stderr' | 'system';
   fromAccountName?: string;
   toAccountName?: string;
