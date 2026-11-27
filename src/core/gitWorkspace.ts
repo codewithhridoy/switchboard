@@ -255,12 +255,23 @@ export async function pushCurrentBranch(
 ): Promise<{ branch: string }> {
   const { stdout } = await runGit(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
   const branch = stdout.trim();
-  const remote = await detectGitHubRemote(cwd);
+  let rawOriginUrl = '';
+  try {
+    const { stdout: urlOut } = await runGit(cwd, ['remote', 'get-url', 'origin']);
+    rawOriginUrl = urlOut.trim();
+  } catch {
+    // Ignore missing remote
+  }
 
   const args: string[] = [];
-  if (githubToken && remote.htmlUrl) {
+  if (githubToken && /^https?:\/\/github\.com\//i.test(rawOriginUrl)) {
     const basicAuth = Buffer.from(`x-access-token:${githubToken}`).toString('base64');
-    args.push('-c', `http.extraHeader=AUTHORIZATION: basic ${basicAuth}`);
+    args.push(
+      '-c',
+      'credential.helper=',
+      '-c',
+      `http.extraHeader=AUTHORIZATION: basic ${basicAuth}`
+    );
   }
   args.push('push', '-u', 'origin', branch);
 
@@ -268,17 +279,76 @@ export async function pushCurrentBranch(
   return { branch };
 }
 
+export function formatGitHubApiError(statusCode: number, rawBody: string): string {
+  try {
+    const parsed = JSON.parse(rawBody) as {
+      message?: string;
+      errors?: Array<{ message?: string; code?: string; field?: string }>;
+    };
+    const detail = parsed.errors?.find((e) => e.message)?.message;
+    if (detail) {
+      return detail;
+    }
+    if (parsed.message) {
+      return `${parsed.message} (HTTP ${statusCode})`;
+    }
+  } catch {
+    // Not JSON
+  }
+  return rawBody.trim().slice(0, 260) || `GitHub API error (HTTP ${statusCode})`;
+}
+
+async function countCommitsAheadOfBase(cwd: string, baseBranch: string): Promise<number | null> {
+  for (const ref of [`origin/${baseBranch}`, baseBranch]) {
+    try {
+      const { stdout } = await runGit(cwd, ['rev-list', '--count', `${ref}..HEAD`]);
+      const n = Number(stdout.trim());
+      if (Number.isFinite(n)) return n;
+    } catch {
+      // Try next ref
+    }
+  }
+  return null;
+}
+
 export async function createGitHubPullRequest(
   input: CreatePrInput,
   githubToken: string
 ): Promise<{ url: string; number: number }> {
-  const status = await getGitWorkspaceStatus(input.cwd);
+  let status = await getGitWorkspaceStatus(input.cwd);
   if (!status.githubFullName) {
     throw new Error('This repository does not have a GitHub `origin` remote.');
   }
-  if (status.currentBranch === input.baseBranch) {
+  const githubFullName = status.githubFullName;
+
+  const baseBranch = input.baseBranch.trim() || 'main';
+
+  if (status.currentBranch === baseBranch) {
+    if (input.newBranchName?.trim()) {
+      await checkoutBranch(input.cwd, input.newBranchName.trim(), true);
+      status = await getGitWorkspaceStatus(input.cwd);
+    } else {
+      throw new Error(
+        `Current branch (${status.currentBranch}) is the same as the base branch (${baseBranch}). Create a feature branch first.`
+      );
+    }
+  }
+
+  if (input.autoCommit && status.files.length > 0) {
+    const commitMessage = input.commitMessage?.trim() || input.title.trim() || `Update ${status.currentBranch}`;
+    await stageAndCommitAll(input.cwd, commitMessage);
+    status = await getGitWorkspaceStatus(input.cwd);
+  }
+
+  const aheadCount = await countCommitsAheadOfBase(input.cwd, baseBranch);
+  if (aheadCount === 0) {
+    if (status.files.length > 0) {
+      throw new Error(
+        `No commits between ${baseBranch} and ${status.currentBranch} yet — you have ${status.files.length} uncommitted file(s). Enable "Commit uncommitted changes first" or click Stage & Commit first.`
+      );
+    }
     throw new Error(
-      `Current branch (${status.currentBranch}) is the same as the base branch. Switch to or create a feature branch first.`
+      `No commits between ${baseBranch} and ${status.currentBranch}. Make and commit changes before opening a Pull Request.`
     );
   }
 
@@ -286,7 +356,7 @@ export async function createGitHubPullRequest(
   await pushCurrentBranch(input.cwd, githubToken);
 
   const res = await fetch(
-    `https://api.github.com/repos/${status.githubFullName}/pulls`,
+    `https://api.github.com/repos/${githubFullName}/pulls`,
     {
       method: 'POST',
       headers: {
@@ -299,7 +369,7 @@ export async function createGitHubPullRequest(
         title: input.title.trim(),
         body: input.body.trim(),
         head: status.currentBranch,
-        base: input.baseBranch.trim() || 'main',
+        base: baseBranch,
         draft: Boolean(input.draft),
       }),
     }
@@ -307,7 +377,31 @@ export async function createGitHubPullRequest(
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    throw new Error(`Failed to create Pull Request (${res.status}): ${errText.slice(0, 260)}`);
+    const friendly = formatGitHubApiError(res.status, errText);
+
+    // If a PR already exists for this branch -> base, return the existing PR cleanly
+    if (res.status === 422 && /pull request already exists/i.test(friendly)) {
+      const owner = githubFullName.split('/')[0];
+      const existingRes = await fetch(
+        `https://api.github.com/repos/${githubFullName}/pulls?state=open&head=${encodeURIComponent(`${owner}:${status.currentBranch}`)}&base=${encodeURIComponent(baseBranch)}`,
+        {
+          headers: {
+            authorization: `Bearer ${githubToken}`,
+            accept: 'application/vnd.github+json',
+            'user-agent': 'Switchboard-AI',
+          },
+        }
+      ).catch(() => null);
+
+      if (existingRes?.ok) {
+        const list = (await existingRes.json()) as Array<{ html_url: string; number: number }>;
+        if (list.length > 0) {
+          return { url: list[0].html_url, number: list[0].number };
+        }
+      }
+    }
+
+    throw new Error(friendly);
   }
 
   const pr = (await res.json()) as { html_url: string; number: number };

@@ -41,6 +41,12 @@ export interface CreatePrInput {
   body: string;
   baseBranch: string;
   draft?: boolean;
+  /** Stage and commit uncommitted changes before pushing & creating the PR */
+  autoCommit?: boolean;
+  /** Optional commit message when autoCommit is true (defaults to PR title) */
+  commitMessage?: string;
+  /** Optional new feature branch to create if currently on baseBranch */
+  newBranchName?: string;
 }
 
 export type TaskCategory =

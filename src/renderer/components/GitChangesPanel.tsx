@@ -37,6 +37,11 @@ function statusLetter(s: string): string {
   return 'M';
 }
 
+function cleanErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return raw.replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/i, '').trim();
+}
+
 export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
   status,
   loading,
@@ -69,6 +74,10 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
   const [prBody, setPrBody] = useState('');
   const [prBase, setPrBase] = useState('main');
   const [prDraft, setPrDraft] = useState(false);
+  const [prAutoCommit, setPrAutoCommit] = useState(true);
+  const [prCommitMessage, setPrCommitMessage] = useState('');
+  const [prNewBranch, setPrNewBranch] = useState('');
+  const [prError, setPrError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!commitMsg && defaultCommitMessage) {
@@ -109,13 +118,30 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
     if (!el) return;
     if (prOpen && !el.open) {
       const filesList = (status?.files ?? []).map((f) => `- \`${f.path}\``).join('\n');
-      setPrTitle(defaultCommitMessage || status?.currentBranch || 'Update');
+      const suggestedTitle =
+        status?.currentBranch && status.currentBranch !== 'main' && status.currentBranch !== 'master'
+          ? status.currentBranch.replace(/[-_/]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+          : defaultCommitMessage || 'Update';
+      setPrTitle(suggestedTitle);
       setPrBody(
         filesList
           ? `## Summary\n\nUpdated via Switchboard AI.\n\n## Changed Files\n${filesList}`
           : '## Summary\n\nUpdated via Switchboard AI.'
       );
-      setPrBase(status?.branches.includes('main') ? 'main' : status?.branches.includes('master') ? 'master' : 'main');
+      const defaultBase = status?.branches.includes('main')
+        ? 'main'
+        : status?.branches.includes('master')
+          ? 'master'
+          : 'main';
+      setPrBase(defaultBase);
+      setPrAutoCommit((status?.files.length ?? 0) > 0);
+      setPrCommitMessage(commitMsg.trim() || suggestedTitle);
+      setPrNewBranch(
+        status?.currentBranch === defaultBase
+          ? `feat/update-${new Date().toISOString().slice(5, 10)}`
+          : ''
+      );
+      setPrError(null);
       el.showModal();
     } else if (!prOpen && el.open) {
       el.close();
@@ -155,7 +181,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
       await fn();
       await onRefresh();
     } catch (err) {
-      setNotice({ ok: false, text: err instanceof Error ? err.message : String(err) });
+      setNotice({ ok: false, text: cleanErrorMessage(err) });
     } finally {
       setBusyAction(null);
     }
@@ -483,15 +509,20 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
             </button>
           </div>
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              void runAction('pr', async () => {
+              setBusyAction('pr');
+              setPrError(null);
+              try {
                 const res = await onCreatePr({
                   cwd: status.cwd,
                   title: prTitle,
                   body: prBody,
                   baseBranch: prBase,
                   draft: prDraft,
+                  autoCommit: prAutoCommit && status.files.length > 0,
+                  commitMessage: prCommitMessage.trim() || prTitle.trim(),
+                  newBranchName: status.currentBranch === prBase ? prNewBranch.trim() : undefined,
                 });
                 setNotice({
                   ok: true,
@@ -499,11 +530,30 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
                   url: res.url,
                 });
                 prDialogRef.current?.close();
-              });
+                await onRefresh();
+              } catch (err) {
+                setPrError(cleanErrorMessage(err));
+              } finally {
+                setBusyAction(null);
+              }
             }}
             style={{ display: 'contents' }}
           >
             <div className="dialog-body scroller">
+              {prError && (
+                <div
+                  style={{
+                    padding: '9px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--danger-soft)',
+                    color: 'var(--danger)',
+                    fontSize: 12.5,
+                  }}
+                >
+                  {prError}
+                </div>
+              )}
+
               <div className="field-row-2">
                 <div className="field">
                   <label>Head Branch (Current)</label>
@@ -525,6 +575,61 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
                   </select>
                 </div>
               </div>
+
+              {status.currentBranch === prBase && (
+                <div className="field">
+                  <label htmlFor="pr-new-branch">New Feature Branch (auto-created before PR)</label>
+                  <input
+                    id="pr-new-branch"
+                    className="input-field mono"
+                    required
+                    placeholder="feat/my-changes"
+                    value={prNewBranch}
+                    onChange={(e) => setPrNewBranch(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {status.files.length > 0 && (
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--bg-elevated)',
+                    border: '1px solid var(--border-default)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
+                >
+                  <label
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 7,
+                      fontSize: 12.5,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={prAutoCommit}
+                      onChange={(e) => setPrAutoCommit(e.target.checked)}
+                    />
+                    Commit &amp; push {status.files.length} uncommitted file{status.files.length === 1 ? '' : 's'} first
+                  </label>
+                  {prAutoCommit && (
+                    <input
+                      type="text"
+                      className="input-field"
+                      placeholder="Commit message"
+                      value={prCommitMessage}
+                      onChange={(e) => setPrCommitMessage(e.target.value)}
+                    />
+                  )}
+                </div>
+              )}
 
               <div className="field">
                 <label htmlFor="pr-title">Pull Request Title</label>
@@ -563,7 +668,9 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
               </button>
               <button type="submit" className="btn btn-primary" disabled={busyAction === 'pr'}>
                 {busyAction === 'pr' ? <Loader2 size={13} className="spin" /> : <GitPullRequest size={13} />}
-                Push & Create PR
+                {prAutoCommit && status.files.length > 0
+                  ? 'Commit, Push & Create PR'
+                  : 'Push & Create PR'}
               </button>
             </div>
           </form>

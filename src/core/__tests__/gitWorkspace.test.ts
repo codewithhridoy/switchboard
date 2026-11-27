@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   checkoutBranch,
+  formatGitHubApiError,
   getFileDiff,
   getGitWorkspaceStatus,
   stageAndCommitAll,
@@ -55,5 +56,21 @@ describe('gitWorkspace', () => {
 
     const afterCommit = await getGitWorkspaceStatus(dir);
     expect(afterCommit.files).toHaveLength(0);
+  });
+
+  it('formats GitHub 422 JSON validation errors into clean human messages', () => {
+    const raw = JSON.stringify({
+      message: 'Validation Failed',
+      errors: [
+        {
+          resource: 'PullRequest',
+          code: 'custom',
+          message: 'No commits between main and feat/p0-followups',
+        },
+      ],
+    });
+    expect(formatGitHubApiError(422, raw)).toBe(
+      'No commits between main and feat/p0-followups'
+    );
   });
 });
