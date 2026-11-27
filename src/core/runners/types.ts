@@ -1,9 +1,11 @@
-import { AccountProfile } from '../../shared/types';
+import { AccountProfile, TaskAttachment } from '../../shared/types';
 
 export interface RunRequest {
   account: AccountProfile;
   prompt: string;
+  attachments?: TaskAttachment[];
   mode: 'coding' | 'general';
+  fastMode?: boolean;
   workspaceDir?: string;
   signal: AbortSignal;
   onChunk: (chunk: string, stream: 'stdout' | 'stderr' | 'system') => void;

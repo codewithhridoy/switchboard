@@ -1,4 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { SwitchboardOrchestrator } from '../core/orchestrator';
 import { getRunnerForProvider } from '../core/runners/index';
@@ -12,6 +15,7 @@ import {
   GitHubSyncConfig,
   ImportProjectInput,
   RoutingRule,
+  TaskAttachment,
   TaskStreamEvent,
 } from '../shared/types';
 import { launchAccountCliLogin } from './terminalLogin';
@@ -234,6 +238,86 @@ function registerIpcHandlers(): void {
     return result.filePaths[0];
   });
 
+  ipcMain.handle('switchboard:pick-files', async (): Promise<TaskAttachment[]> => {
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const result = await dialog.showOpenDialog(win ?? undefined!, {
+      properties: ['openFile', 'multiSelections'],
+      title: 'Attach Images or Files',
+      filters: [
+        {
+          name: 'Images & Documents',
+          extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'pdf', 'txt', 'md', 'json', 'ts', 'tsx', 'js', 'py', 'go', 'rs', 'csv', 'log', 'yaml', 'yml', 'html', 'css'],
+        },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) return [];
+
+    const attachments: TaskAttachment[] = [];
+    for (const filePath of result.filePaths) {
+      try {
+        const stat = fs.statSync(filePath);
+        const name = path.basename(filePath);
+        const mimeType = guessMimeType(name);
+        const isImage = mimeType.startsWith('image/');
+        let previewDataUrl: string | undefined;
+        if (isImage && stat.size <= 5 * 1024 * 1024) {
+          const b64 = fs.readFileSync(filePath).toString('base64');
+          previewDataUrl = `data:${mimeType};base64,${b64}`;
+        }
+        attachments.push({
+          id: `att-${crypto.randomUUID().slice(0, 8)}`,
+          name,
+          path: filePath,
+          mimeType,
+          size: stat.size,
+          isImage,
+          previewDataUrl,
+        });
+      } catch {
+        // Skip unreadable file
+      }
+    }
+    return attachments;
+  });
+
+  ipcMain.handle(
+    'switchboard:save-attachment',
+    async (
+      _e,
+      input: { name: string; mimeType: string; base64Data: string }
+    ): Promise<TaskAttachment> => {
+      const attachDir = path.join(os.homedir(), '.switchboard', 'attachments');
+      fs.mkdirSync(attachDir, { recursive: true });
+      const ext = extFromMimeOrName(input.mimeType, input.name);
+      const id = `att-${crypto.randomUUID().slice(0, 8)}`;
+      const safeBase =
+        path
+          .basename(input.name || `pasted-image.${ext}`, path.extname(input.name || ''))
+          .replace(/[^a-zA-Z0-9-_]+/g, '-')
+          .slice(0, 32) || 'attachment';
+      const fileName = `${safeBase}-${id.slice(-4)}.${ext}`;
+      const fullPath = path.join(attachDir, fileName);
+
+      const buf = Buffer.from(input.base64Data, 'base64');
+      fs.writeFileSync(fullPath, buf);
+
+      const isImage = input.mimeType.startsWith('image/');
+      return {
+        id,
+        name: input.name || fileName,
+        path: fullPath,
+        mimeType: input.mimeType || 'application/octet-stream',
+        size: buf.length,
+        isImage,
+        previewDataUrl:
+          isImage && buf.length <= 5 * 1024 * 1024
+            ? `data:${input.mimeType};base64,${input.base64Data}`
+            : undefined,
+      };
+    }
+  );
+
   ipcMain.handle('switchboard:open-external', async (_e, url: string) => {
     if (/^https?:\/\//i.test(url)) {
       await shell.openExternal(url);
@@ -260,3 +344,39 @@ app.on('window-all-closed', () => {
     app.quit();
   }
 });
+
+function guessMimeType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase().replace(/^\./, '');
+  switch (ext) {
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    case 'pdf':
+      return 'application/pdf';
+    case 'json':
+      return 'application/json';
+    case 'md':
+      return 'text/markdown';
+    case 'csv':
+      return 'text/csv';
+    default:
+      return 'text/plain';
+  }
+}
+
+function extFromMimeOrName(mimeType: string, name?: string): string {
+  const fromName = name ? path.extname(name).replace(/^\./, '').toLowerCase() : '';
+  if (fromName) return fromName;
+  if (mimeType === 'image/jpeg') return 'jpg';
+  if (mimeType === 'image/webp') return 'webp';
+  if (mimeType === 'image/gif') return 'gif';
+  if (mimeType === 'application/pdf') return 'pdf';
+  if (mimeType.startsWith('image/')) return 'png';
+  return 'txt';
+}

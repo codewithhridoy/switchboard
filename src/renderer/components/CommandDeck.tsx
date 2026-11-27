@@ -5,17 +5,21 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  FileText,
   FolderGit2,
   FolderOpen,
   Loader2,
   MessageSquarePlus,
+  Paperclip,
   Play,
   RefreshCw,
   Shield,
   Sparkles,
   Square,
   Trash2,
+  X,
   XCircle,
+  Zap,
 } from 'lucide-react';
 import {
   composeModelId,
@@ -32,6 +36,7 @@ import {
   EffortLevel,
   OrchestratedTask,
   SwitchboardState,
+  TaskAttachment,
 } from '../../shared/types';
 import { MarkdownView } from './MarkdownView';
 
@@ -45,6 +50,12 @@ interface CommandDeckProps {
   onCancelTask: (taskId: string) => Promise<void>;
   onDeleteTask: (taskId: string) => Promise<void>;
   onPickFolder: () => Promise<string | null>;
+  onPickFiles: () => Promise<TaskAttachment[]>;
+  onSaveAttachment: (input: {
+    name: string;
+    mimeType: string;
+    base64Data: string;
+  }) => Promise<TaskAttachment | null>;
 }
 
 const EXAMPLE_PROMPTS = [
@@ -95,6 +106,8 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   onCancelTask,
   onDeleteTask,
   onPickFolder,
+  onPickFiles,
+  onSaveAttachment,
 }) => {
   const activeProject = state.projects.find((p) => p.id === activeProjectId) ?? null;
   const projectThreads = useMemo(
@@ -107,7 +120,10 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
 
   const [activeThreadId, setActiveThreadId] = useState<string>('');
   const [prompt, setPrompt] = useState('');
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
+  const [dragOver, setDragOver] = useState(false);
   const [mode, setMode] = useState<'coding' | 'general'>('coding');
+  const [fastMode, setFastMode] = useState(false);
   const [workspaceDir, setWorkspaceDir] = useState(
     activeProject?.path || state.settings.defaultWorkspaceDir || ''
   );
@@ -168,9 +184,47 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
     return filteredTasks[0] ?? null;
   }, [selectedTaskId, filteredTasks]);
 
+  const ingestBrowserFiles = async (files: File[]) => {
+    for (const file of files) {
+      const base64Data = await fileToBase64(file);
+      const saved = await onSaveAttachment({
+        name: file.name || `pasted-${Date.now()}.png`,
+        mimeType: file.type || 'application/octet-stream',
+        base64Data,
+      });
+      if (saved) {
+        setAttachments((prev) => [...prev, saved]);
+      }
+    }
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const pastedFiles: File[] = [];
+    for (const item of items) {
+      if (item.kind === 'file') {
+        const f = item.getAsFile();
+        if (f) pastedFiles.push(f);
+      }
+    }
+    if (pastedFiles.length > 0) {
+      e.preventDefault();
+      await ingestBrowserFiles(pastedFiles);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length > 0) {
+      await ingestBrowserFiles(files);
+    }
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    const cleaned = prompt.trim();
+    const cleaned = prompt.trim() || (attachments.length > 0 ? 'Analyze the attached file(s).' : '');
     if (!cleaned) return;
     let resolvedForcedModel: string | null = null;
     let resolvedForcedEffort: EffortLevel | null = null;
@@ -208,9 +262,11 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
 
     const created = await onEnqueueTask({
       prompt: cleaned,
+      attachments: attachments.length > 0 ? attachments : undefined,
       projectId: activeProjectId,
       threadId: targetThreadId,
       mode,
+      fastMode,
       workspaceDir: mode === 'coding' ? workspaceDir : undefined,
       workspaceScope,
       autoDecompose,
@@ -219,6 +275,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
       forcedEffort: resolvedForcedEffort,
     });
     setPrompt('');
+    setAttachments([]);
     if (created) {
       setSelectedTaskId(created.id);
     }
@@ -232,7 +289,16 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
 
   return (
     <div className="command-deck">
-      <form className="card composer-card" onSubmit={handleSubmit}>
+      <form
+        className={`card composer-card ${dragOver ? 'drag-over' : ''}`}
+        onSubmit={handleSubmit}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!dragOver) setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => void handleDrop(e)}
+      >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <Sparkles size={15} style={{ color: 'var(--accent)' }} />
@@ -308,15 +374,56 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
 
         <textarea
           className="composer-textarea scroller"
-          placeholder="Describe your task — numbered steps (1., 2., 3.) are automatically split and routed to the ideal model for each phase... (⌘/Ctrl + Enter to run)"
+          placeholder="Ask anything, paste screenshots (⌘V), or drop files here — numbered steps auto-split across models... (⌘/Ctrl + Enter to run)"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
+          onPaste={(e) => void handlePaste(e)}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
               void handleSubmit();
             }
           }}
         />
+
+        {attachments.length > 0 && (
+          <div className="attachment-strip">
+            {attachments.map((att) => (
+              <div key={att.id} className="attachment-chip" title={att.path}>
+                {att.isImage && att.previewDataUrl ? (
+                  <img src={att.previewDataUrl} alt={att.name} className="attachment-thumb" />
+                ) : (
+                  <FileText size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                )}
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {att.name}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                    {Math.max(1, Math.round(att.size / 1024))} KB
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  style={{ width: 22, height: 22, padding: 2 }}
+                  aria-label={`Remove ${att.name}`}
+                  onClick={() =>
+                    setAttachments((prev) => prev.filter((a) => a.id !== att.id))
+                  }
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="composer-controls">
           <div className="composer-group">
@@ -458,6 +565,42 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               );
             })()}
 
+            <button
+              type="button"
+              className="btn btn-sm"
+              title="Attach images, PDFs, or code files (or paste images with ⌘V)"
+              onClick={async () => {
+                const picked = await onPickFiles();
+                if (picked.length > 0) {
+                  setAttachments((prev) => [...prev, ...picked]);
+                }
+              }}
+            >
+              <Paperclip size={13} />
+              Attach{attachments.length > 0 ? ` (${attachments.length})` : ''}
+            </button>
+
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                fontSize: 12,
+                color: fastMode ? 'var(--accent)' : 'var(--text-secondary)',
+                fontWeight: fastMode ? 600 : 400,
+                cursor: 'pointer',
+              }}
+              title="Use low reasoning effort & skip slow MCP/skill startup for rapid replies"
+            >
+              <input
+                type="checkbox"
+                checked={fastMode}
+                onChange={(e) => setFastMode(e.target.checked)}
+              />
+              <Zap size={12} />
+              Fast
+            </label>
+
             <label
               style={{
                 display: 'inline-flex',
@@ -480,7 +623,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={!prompt.trim() || state.accounts.length === 0}
+            disabled={(!prompt.trim() && attachments.length === 0) || state.accounts.length === 0}
           >
             <Play size={14} />
             Queue & Run
@@ -624,7 +767,28 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               </div>
 
               <div className="task-detail-scroll scroller">
-                <div className="user-prompt-bubble">{selectedTask.prompt}</div>
+                <div className="user-prompt-bubble">
+                  {selectedTask.attachments && selectedTask.attachments.length > 0 && (
+                    <div className="bubble-attachments">
+                      {selectedTask.attachments.map((att) =>
+                        att.isImage && att.previewDataUrl ? (
+                          <img
+                            key={att.id}
+                            src={att.previewDataUrl}
+                            alt={att.name}
+                            className="bubble-img-preview"
+                          />
+                        ) : (
+                          <span key={att.id} className="pill mono">
+                            <FileText size={11} />
+                            {att.name}
+                          </span>
+                        )
+                      )}
+                    </div>
+                  )}
+                  <div>{selectedTask.prompt}</div>
+                </div>
 
                 {selectedTask.error && (
                   <div
@@ -777,3 +941,16 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
     </div>
   );
 };
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const str = String(reader.result ?? '');
+      const comma = str.indexOf(',');
+      resolve(comma >= 0 ? str.slice(comma + 1) : str);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}

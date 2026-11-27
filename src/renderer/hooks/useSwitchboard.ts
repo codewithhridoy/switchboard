@@ -337,6 +337,18 @@ export function useSwitchboard() {
       }
       return null;
     },
+    pickFiles: async () => {
+      if (window.switchboard) {
+        return window.switchboard.pickFiles();
+      }
+      return [];
+    },
+    saveAttachment: async (input: { name: string; mimeType: string; base64Data: string }) => {
+      if (window.switchboard) {
+        return window.switchboard.saveAttachment(input);
+      }
+      return null;
+    },
     openExternal: async (url: string) => {
       if (window.switchboard) {
         await window.switchboard.openExternal(url);

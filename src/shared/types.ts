@@ -200,13 +200,26 @@ export interface GitHubSyncConfig {
   lastError?: string | null;
 }
 
+export interface TaskAttachment {
+  id: string;
+  name: string;
+  path: string;
+  mimeType: string;
+  size: number;
+  isImage: boolean;
+  /** Optional small data URL preview for thumbnails in UI */
+  previewDataUrl?: string;
+}
+
 export interface OrchestratedTask {
   id: string;
   projectId?: string | null;
   threadId?: string | null;
   title: string;
   prompt: string;
+  attachments?: TaskAttachment[];
   mode: 'coding' | 'general';
+  fastMode?: boolean;
   workspaceDir?: string;
   workspaceScope: AccountScope;
   autoDecompose: boolean;
@@ -285,9 +298,11 @@ export interface TaskStreamEvent {
 export interface CreateTaskInput {
   prompt: string;
   title?: string;
+  attachments?: TaskAttachment[];
   projectId?: string | null;
   threadId?: string | null;
   mode: 'coding' | 'general';
+  fastMode?: boolean;
   workspaceDir?: string;
   workspaceScope?: AccountScope;
   autoDecompose?: boolean;

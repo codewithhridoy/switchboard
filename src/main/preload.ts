@@ -36,6 +36,8 @@ const api: SwitchboardApi = {
   cancelTask: (taskId) => ipcRenderer.invoke('switchboard:cancel-task', taskId),
   deleteTask: (taskId) => ipcRenderer.invoke('switchboard:delete-task', taskId),
   pickFolder: () => ipcRenderer.invoke('switchboard:pick-folder'),
+  pickFiles: () => ipcRenderer.invoke('switchboard:pick-files'),
+  saveAttachment: (input) => ipcRenderer.invoke('switchboard:save-attachment', input),
   openExternal: (url) => ipcRenderer.invoke('switchboard:open-external', url),
   onEvent: (listener) => {
     const wrapped = (_event: Electron.IpcRendererEvent, payload: TaskStreamEvent) => {

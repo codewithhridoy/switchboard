@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 import { detectRateLimit } from '../rateLimit';
 import { buildEnrichedPath, resolveExecutable } from './cliEnv';
 import { ParsedStreamDelta, parseClaudeStreamLine } from './streamParsers';
@@ -17,6 +18,7 @@ export class ClaudeCliRunner implements ProviderRunner {
       };
     }
 
+    const hasAttachments = Boolean(req.attachments && req.attachments.length > 0);
     const args = [
       '-p',
       req.prompt,
@@ -28,9 +30,27 @@ export class ClaudeCliRunner implements ProviderRunner {
     if (req.account.model) {
       args.push('--model', req.account.model);
     }
-    if (req.account.effort) {
-      args.push('--effort', req.account.effort);
+    const effectiveEffort = req.fastMode ? 'low' : req.account.effort;
+    if (effectiveEffort) {
+      args.push('--effort', effectiveEffort);
     }
+
+    // Fast-path flags: skip slow MCP server cold boot & skill scans on General/Fast chats
+    if (req.fastMode || req.mode === 'general') {
+      args.push('--strict-mcp-config', '--disable-slash-commands');
+      if (req.mode === 'general' && !hasAttachments) {
+        args.push('--tools', '');
+      }
+    }
+
+    // Grant read access to attachment directories so Claude can inspect pasted images/files immediately
+    if (hasAttachments && req.attachments) {
+      const dirs = Array.from(new Set(req.attachments.map((a) => path.dirname(a.path))));
+      for (const d of dirs) {
+        args.push('--add-dir', d);
+      }
+    }
+
     if (req.account.extraArgs?.length) {
       args.push(...req.account.extraArgs);
     }

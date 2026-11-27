@@ -138,6 +138,8 @@ export const App: React.FC = () => {
               onCancelTask={actions.cancelTask}
               onDeleteTask={actions.deleteTask}
               onPickFolder={actions.pickFolder}
+              onPickFiles={actions.pickFiles}
+              onSaveAttachment={actions.saveAttachment}
             />
           )}
           {activeTab === 'projects' && (

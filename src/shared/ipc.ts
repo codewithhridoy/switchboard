@@ -14,6 +14,7 @@ import {
   ProjectWorkspace,
   RoutingRule,
   SwitchboardState,
+  TaskAttachment,
   TaskStreamEvent,
 } from './types';
 
@@ -63,6 +64,12 @@ export interface SwitchboardApi {
   cancelTask: (taskId: string) => Promise<boolean>;
   deleteTask: (taskId: string) => Promise<boolean>;
   pickFolder: () => Promise<string | null>;
+  pickFiles: () => Promise<TaskAttachment[]>;
+  saveAttachment: (input: {
+    name: string;
+    mimeType: string;
+    base64Data: string;
+  }) => Promise<TaskAttachment>;
   openExternal: (url: string) => Promise<void>;
   onEvent: (listener: (event: TaskStreamEvent) => void) => () => void;
 }

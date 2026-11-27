@@ -581,7 +581,9 @@ export class SwitchboardOrchestrator extends EventEmitter {
       threadId,
       title: input.title?.trim() || deriveTitle(input.prompt),
       prompt: input.prompt.trim(),
+      attachments: input.attachments?.length ? input.attachments : undefined,
       mode: input.mode,
+      fastMode: input.fastMode ?? false,
       workspaceDir:
         input.mode === 'coding'
           ? input.workspaceDir?.trim() ||
@@ -840,10 +842,19 @@ export class SwitchboardOrchestrator extends EventEmitter {
       this.activeAbortController = new AbortController();
       const runner = this.runnerFactory(account.provider);
 
+      const autoFast =
+        Boolean(task.fastMode) ||
+        (!task.forcedEffort &&
+          subtask.category === 'quick-edit' &&
+          task.prompt.length < 220 &&
+          (!task.attachments || task.attachments.length === 0));
+
       const result = await runner.run({
         account: effectiveAccount,
         prompt: composedPrompt,
+        attachments: task.attachments,
         mode: task.mode,
+        fastMode: autoFast,
         workspaceDir: task.workspaceDir,
         signal: this.activeAbortController.signal,
         onStatus: (statusText) => {
@@ -1068,6 +1079,15 @@ export class SwitchboardOrchestrator extends EventEmitter {
 
     if (task.mode === 'coding' && task.workspaceDir) {
       sections.push(`Working directory: ${task.workspaceDir}`);
+    }
+
+    if (task.attachments && task.attachments.length > 0) {
+      const list = task.attachments
+        .map((a) => `- ${a.path} (${a.mimeType}, ${Math.max(1, Math.round(a.size / 1024))} KB)`)
+        .join('\n');
+      sections.push(
+        `Attached files provided by the user (inspect them using your file/image viewer tool):\n${list}`
+      );
     }
 
     sections.push(subtask.prompt);

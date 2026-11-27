@@ -1,9 +1,35 @@
+import fs from 'node:fs';
+import { TaskAttachment } from '../../shared/types';
 import { detectRateLimit } from '../rateLimit';
 import { ProviderRunner, RunRequest, RunResult } from './types';
+
+function readAttachmentBase64(att: TaskAttachment): string | null {
+  try {
+    if (!fs.existsSync(att.path)) return null;
+    // Cap inline API attachment reads at 15MB
+    const stat = fs.statSync(att.path);
+    if (stat.size > 15 * 1024 * 1024) return null;
+    return fs.readFileSync(att.path).toString('base64');
+  } catch {
+    return null;
+  }
+}
+
+function readTextAttachment(att: TaskAttachment): string | null {
+  try {
+    if (!fs.existsSync(att.path)) return null;
+    const stat = fs.statSync(att.path);
+    if (stat.size > 256 * 1024) return null;
+    return fs.readFileSync(att.path, 'utf8');
+  } catch {
+    return null;
+  }
+}
 
 export class ApiRunner implements ProviderRunner {
   async run(req: RunRequest): Promise<RunResult> {
     const { provider } = req.account;
+    req.onStatus?.(`Connecting to ${req.account.name} (${req.account.model})...`);
     if (provider === 'anthropic-api') {
       return this.runAnthropic(req);
     }
@@ -20,6 +46,28 @@ export class ApiRunner implements ProviderRunner {
     const base = (req.account.baseUrl || 'https://api.anthropic.com').replace(/\/+$/, '');
     const url = `${base}/v1/messages`;
 
+    const contentBlocks: unknown[] = [];
+    for (const att of req.attachments ?? []) {
+      if (att.isImage) {
+        const b64 = readAttachmentBase64(att);
+        if (b64) {
+          contentBlocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: att.mimeType, data: b64 },
+          });
+        }
+      } else {
+        const text = readTextAttachment(att);
+        if (text) {
+          contentBlocks.push({
+            type: 'text',
+            text: `Attached file (${att.name}):\n\`\`\`\n${text}\n\`\`\``,
+          });
+        }
+      }
+    }
+    contentBlocks.push({ type: 'text', text: req.prompt });
+
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -33,7 +81,7 @@ export class ApiRunner implements ProviderRunner {
           model: req.account.model,
           max_tokens: 4096,
           stream: true,
-          messages: [{ role: 'user', content: req.prompt }],
+          messages: [{ role: 'user', content: contentBlocks }],
         }),
       });
 
@@ -61,13 +109,29 @@ export class ApiRunner implements ProviderRunner {
     ).replace(/\/+$/, '');
     const url = `${base}/v1beta/models/${encodeURIComponent(req.account.model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(req.account.apiKey)}`;
 
+    const parts: unknown[] = [];
+    for (const att of req.attachments ?? []) {
+      if (att.isImage || att.mimeType === 'application/pdf') {
+        const b64 = readAttachmentBase64(att);
+        if (b64) {
+          parts.push({ inlineData: { mimeType: att.mimeType, data: b64 } });
+        }
+      } else {
+        const text = readTextAttachment(att);
+        if (text) {
+          parts.push({ text: `Attached file (${att.name}):\n\`\`\`\n${text}\n\`\`\`` });
+        }
+      }
+    }
+    parts.push({ text: req.prompt });
+
     try {
       const res = await fetch(url, {
         method: 'POST',
         signal: req.signal,
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
+          contents: [{ role: 'user', parts }],
         }),
       });
 
@@ -76,9 +140,9 @@ export class ApiRunner implements ProviderRunner {
       }
 
       return await consumeSseStream(res, req.onChunk, (data) => {
-        const parts = data?.candidates?.[0]?.content?.parts;
-        if (!Array.isArray(parts)) return '';
-        return parts.map((p: { text?: string }) => p.text ?? '').join('');
+        const respParts = data?.candidates?.[0]?.content?.parts;
+        if (!Array.isArray(respParts)) return '';
+        return respParts.map((p: { text?: string }) => p.text ?? '').join('');
       });
     } catch (err) {
       return handleFetchException(err);
@@ -95,6 +159,33 @@ export class ApiRunner implements ProviderRunner {
       headers.authorization = `Bearer ${req.account.apiKey}`;
     }
 
+    const hasAttachments = Boolean(req.attachments && req.attachments.length > 0);
+    let content: unknown = req.prompt;
+    if (hasAttachments) {
+      const blocks: unknown[] = [];
+      for (const att of req.attachments ?? []) {
+        if (att.isImage) {
+          const b64 = readAttachmentBase64(att);
+          if (b64) {
+            blocks.push({
+              type: 'image_url',
+              image_url: { url: `data:${att.mimeType};base64,${b64}` },
+            });
+          }
+        } else {
+          const text = readTextAttachment(att);
+          if (text) {
+            blocks.push({
+              type: 'text',
+              text: `Attached file (${att.name}):\n\`\`\`\n${text}\n\`\`\``,
+            });
+          }
+        }
+      }
+      blocks.push({ type: 'text', text: req.prompt });
+      content = blocks;
+    }
+
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -103,7 +194,7 @@ export class ApiRunner implements ProviderRunner {
         body: JSON.stringify({
           model: req.account.model,
           stream: true,
-          messages: [{ role: 'user', content: req.prompt }],
+          messages: [{ role: 'user', content }],
         }),
       });
 
