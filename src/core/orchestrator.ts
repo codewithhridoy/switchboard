@@ -630,7 +630,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       prompt: input.prompt.trim(),
       attachments: input.attachments?.length ? input.attachments : undefined,
       mode: input.mode,
-      permissionMode: input.permissionMode ?? (input.mode === 'coding' ? 'accept-edits' : undefined),
+      permissionMode: input.permissionMode ?? (input.mode === 'coding' ? 'full-auto' : undefined),
       fastMode: input.fastMode ?? false,
       workspaceDir:
         input.mode === 'coding'

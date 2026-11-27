@@ -163,7 +163,26 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [mode, setMode] = useState<'coding' | 'general'>('coding');
-  const [permissionMode, setPermissionMode] = useState<CodingPermissionMode>('accept-edits');
+  const [permissionMode, setPermissionMode] = useState<CodingPermissionMode>(() => {
+    try {
+      const saved = window.localStorage.getItem('switchboard:permission-mode');
+      if (saved === 'full-auto' || saved === 'accept-edits' || saved === 'read-only') {
+        return saved;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return 'full-auto';
+  });
+
+  const updatePermissionMode = (next: CodingPermissionMode) => {
+    setPermissionMode(next);
+    try {
+      window.localStorage.setItem('switchboard:permission-mode', next);
+    } catch {
+      // ignore storage errors
+    }
+  };
   const [fastMode, setFastMode] = useState(false);
   const [workspaceDir, setWorkspaceDir] = useState(
     activeProject?.path || state.settings.defaultWorkspaceDir || ''
@@ -425,11 +444,11 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                 className="select-compact"
                 aria-label="Coding agent permissions"
                 value={permissionMode}
-                onChange={(e) => setPermissionMode(e.target.value as CodingPermissionMode)}
-                title="Edits Only allows file edits but blocks shell commands (git/pnpm); Full Auto allows both file edits and shell commands"
+                onChange={(e) => updatePermissionMode(e.target.value as CodingPermissionMode)}
+                title="Full Auto allows file edits and shell commands (git/pnpm/tests); Edits Only blocks shell commands"
               >
-                <option value="accept-edits">Edits Only (No Shell)</option>
                 <option value="full-auto">Full Auto (Edits + Shell)</option>
+                <option value="accept-edits">Edits Only (No Shell)</option>
                 <option value="read-only">Plan / Read-Only</option>
               </select>
             </>
@@ -700,7 +719,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                                   type="button"
                                   className="btn btn-primary btn-sm"
                                   onClick={() => {
-                                    setPermissionMode('full-auto');
+                                    updatePermissionMode('full-auto');
                                     void onRetryTask(turn.id, { permissionMode: 'full-auto' });
                                   }}
                                 >

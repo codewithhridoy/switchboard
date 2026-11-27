@@ -786,9 +786,10 @@ body,
 .subtask-header {
   padding: 10px 14px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px 10px;
   border-bottom: 1px solid var(--border-subtle);
 }
 

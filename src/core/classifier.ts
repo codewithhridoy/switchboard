@@ -38,8 +38,8 @@ const CATEGORY_SIGNALS: Record<
       label: 'engineering',
     },
     {
-      pattern: /\b(?:write code|cli|sdk|scripts?|algorithms?|handler|database)\b/gi,
-      weight: 1.6,
+      pattern: /\b(?:write code|cli|sdk|scripts?|algorithms?|handler|database|deploy(?:ment)?|pull request|create pr|complete all|finish all|all steps|all tasks|one by one|checklist)\b/gi,
+      weight: 1.8,
       label: 'coding',
     },
   ],
@@ -125,13 +125,13 @@ const CATEGORY_SIGNALS: Record<
 export function classifyPrompt(prompt: string, mode: 'coding' | 'general'): ClassificationResult {
   const scores: Record<TaskCategory, number> = {
     architecture: 0,
-    coding: mode === 'coding' ? 0.4 : 0,
+    coding: mode === 'coding' ? 0.55 : 0,
     'frontend-ui': 0,
     debugging: 0,
     'large-context': prompt.length > 6000 ? 4.5 : 0,
     research: mode === 'general' ? 0.4 : 0,
     writing: 0,
-    'quick-edit': prompt.length < 90 ? 0.6 : 0,
+    'quick-edit': mode === 'general' && prompt.length < 90 ? 0.6 : 0,
   };
 
   const matched: Record<TaskCategory, string[]> = {

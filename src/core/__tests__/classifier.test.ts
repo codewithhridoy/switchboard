@@ -33,6 +33,14 @@ describe('classifyPrompt', () => {
     );
     expect(res.category).toBe('writing');
   });
+
+  it('routes short coding execution instructions to coding instead of quick-edit', () => {
+    const res = classifyPrompt(
+      'p0 is merged and complete all other steps from p1--5 and everything one by one',
+      'coding'
+    );
+    expect(res.category).toBe('coding');
+  });
 });
 
 describe('decomposePrompt', () => {
