@@ -18,6 +18,8 @@ const api: SwitchboardApi = {
   updateSettings: (patch) => ipcRenderer.invoke('switchboard:update-settings', patch),
   createProject: (input) => ipcRenderer.invoke('switchboard:create-project', input),
   importProject: (input) => ipcRenderer.invoke('switchboard:import-project', input),
+  cloneRepoProject: (input) => ipcRenderer.invoke('switchboard:clone-repo', input),
+  listGitHubRepos: () => ipcRenderer.invoke('switchboard:list-github-repos'),
   pushProjectToGitHub: (projectId, isPrivate) =>
     ipcRenderer.invoke('switchboard:push-project-github', projectId, isPrivate),
   deleteProject: (projectId) => ipcRenderer.invoke('switchboard:delete-project', projectId),

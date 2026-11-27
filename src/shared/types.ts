@@ -309,6 +309,26 @@ export interface ImportProjectInput {
   scope: AccountScope;
 }
 
+export interface CloneRepoInput {
+  repoUrl: string;
+  parentDir: string;
+  folderName?: string;
+  branch?: string;
+  scope: AccountScope;
+}
+
+export interface GitHubRepoSummary {
+  id: number;
+  name: string;
+  fullName: string;
+  description: string | null;
+  private: boolean;
+  cloneUrl: string;
+  htmlUrl: string;
+  defaultBranch: string;
+  updatedAt: string;
+}
+
 export interface CreateAccountInput {
   name: string;
   provider: ProviderKind;

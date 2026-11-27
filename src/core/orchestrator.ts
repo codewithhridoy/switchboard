@@ -8,10 +8,12 @@ import {
   AppSettings,
   ChatThread,
   CliHealthInfo,
+  CloneRepoInput,
   CreateAccountInput,
   CreateProjectInput,
   CreateTaskInput,
   ExecutionAttempt,
+  GitHubRepoSummary,
   GitHubSyncConfig,
   ImportProjectInput,
   ModelChoice,
@@ -35,8 +37,10 @@ import {
   resolveGitHubToken,
 } from './githubSync';
 import {
+  cloneGitRepository,
   createGitHubRepoAndPush,
   detectGitHubRemote,
+  listUserGitHubRepos,
   scaffoldProjectDirectory,
 } from './projects';
 import { getNextCooldownExpiry, selectAccountForTask } from './router';
@@ -305,6 +309,34 @@ export class SwitchboardOrchestrator extends EventEmitter {
 
     this.saveAndMaybeSync();
     return project;
+  }
+
+  public async listGitHubRepos(): Promise<GitHubRepoSummary[]> {
+    const data = this.store.getData();
+    const authMode = data.sync.authMode ?? 'gh-cli';
+    const token = await resolveGitHubToken(authMode, data.sync.patToken);
+    return listUserGitHubRepos(token);
+  }
+
+  public async cloneRepoProject(input: CloneRepoInput): Promise<ProjectWorkspace> {
+    const data = this.store.getData();
+    let token: string | undefined;
+    try {
+      if (data.sync.connected && data.sync.authMode) {
+        token = await resolveGitHubToken(data.sync.authMode, data.sync.patToken);
+      } else {
+        token = await resolveGitHubToken('gh-cli');
+      }
+    } catch {
+      // Public repos or SSH URLs don't require a GitHub token
+    }
+
+    const { projectPath, name } = await cloneGitRepository(input, token);
+    return this.importProject({
+      path: projectPath,
+      name,
+      scope: input.scope,
+    });
   }
 
   public async pushProjectToGitHub(

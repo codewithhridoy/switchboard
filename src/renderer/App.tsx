@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, FolderPlus, Plus, Settings } from 'lucide-react';
 import { AccountsView } from './components/AccountsView';
 import { AddAccountDialog } from './components/AddAccountDialog';
+import { CloneRepoDialog } from './components/CloneRepoDialog';
 import { CommandDeck } from './components/CommandDeck';
 import { CreateProjectDialog } from './components/CreateProjectDialog';
 import { ProjectsView } from './components/ProjectsView';
@@ -46,6 +47,7 @@ export const App: React.FC = () => {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [addAccountOpen, setAddAccountOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [cloneRepoOpen, setCloneRepoOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
@@ -142,6 +144,7 @@ export const App: React.FC = () => {
             <ProjectsView
               state={state}
               onOpenCreateProject={() => setCreateProjectOpen(true)}
+              onOpenCloneRepo={() => setCloneRepoOpen(true)}
               onImportFolder={async () => {
                 const folder = await actions.pickFolder();
                 if (folder) {
@@ -219,6 +222,23 @@ export const App: React.FC = () => {
           const created = await actions.createProject(input);
           if (created) {
             setActiveProjectId(created.id);
+            setActiveTab('tasks');
+          }
+        }}
+      />
+
+      <CloneRepoDialog
+        open={cloneRepoOpen}
+        defaultParentDir={state.settings.defaultWorkspaceDir}
+        githubConnected={state.sync.connected}
+        githubUsername={state.sync.username}
+        onClose={() => setCloneRepoOpen(false)}
+        onPickFolder={actions.pickFolder}
+        onListGitHubRepos={actions.listGitHubRepos}
+        onClone={async (input) => {
+          const cloned = await actions.cloneRepoProject(input);
+          if (cloned) {
+            setActiveProjectId(cloned.id);
             setActiveTab('tasks');
           }
         }}

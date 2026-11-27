@@ -3,9 +3,11 @@ import {
   AppSettings,
   ChatThread,
   CliHealthInfo,
+  CloneRepoInput,
   CreateAccountInput,
   CreateProjectInput,
   CreateTaskInput,
+  GitHubRepoSummary,
   GitHubSyncConfig,
   ImportProjectInput,
   OrchestratedTask,
@@ -34,6 +36,8 @@ export interface SwitchboardApi {
   // Projects & Multi-Turn Threads
   createProject: (input: CreateProjectInput) => Promise<ProjectWorkspace>;
   importProject: (input: ImportProjectInput) => Promise<ProjectWorkspace>;
+  cloneRepoProject: (input: CloneRepoInput) => Promise<ProjectWorkspace>;
+  listGitHubRepos: () => Promise<GitHubRepoSummary[]>;
   pushProjectToGitHub: (projectId: string, isPrivate: boolean) => Promise<ProjectWorkspace>;
   deleteProject: (projectId: string) => Promise<boolean>;
   createThread: (projectId: string | null, title?: string) => Promise<ChatThread>;

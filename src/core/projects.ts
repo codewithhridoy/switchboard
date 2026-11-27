@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { CreateProjectInput } from '../shared/types';
+import { CloneRepoInput, CreateProjectInput, GitHubRepoSummary } from '../shared/types';
 import { buildEnrichedPath, resolveExecutable } from './runners/cliEnv';
 
 const execFileAsync = promisify(execFile);
@@ -228,4 +228,120 @@ export async function detectGitHubRemote(
     // No remote configured
   }
   return {};
+}
+
+export function normalizeRepoCloneUrl(raw: string): {
+  cloneUrl: string;
+  defaultFolderName: string;
+  isGitHubHttps: boolean;
+} {
+  const trimmed = raw.trim();
+  // Support `owner/repo` shorthand
+  if (/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/.test(trimmed)) {
+    const repoPart = trimmed.split('/')[1].replace(/\.git$/i, '');
+    return {
+      cloneUrl: `https://github.com/${trimmed.replace(/\.git$/i, '')}.git`,
+      defaultFolderName: repoPart,
+      isGitHubHttps: true,
+    };
+  }
+
+  const folderMatch = trimmed.match(/\/([^/]+?)(?:\.git)?\/?$/);
+  const sshMatch = trimmed.match(/:([^/]+\/)?([^/]+?)(?:\.git)?$/);
+  const defaultFolderName =
+    folderMatch?.[1] || sshMatch?.[2] || `repo-${Date.now()}`;
+
+  return {
+    cloneUrl: trimmed,
+    defaultFolderName,
+    isGitHubHttps: /^https:\/\/github\.com\//i.test(trimmed),
+  };
+}
+
+export async function listUserGitHubRepos(token: string): Promise<GitHubRepoSummary[]> {
+  const res = await fetch(
+    'https://api.github.com/user/repos?sort=updated&per_page=60&affiliation=owner,collaborator,organization_member',
+    {
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: 'application/vnd.github+json',
+        'user-agent': 'Switchboard-AI',
+      },
+    }
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Failed to list GitHub repos (${res.status}): ${body.slice(0, 200)}`);
+  }
+  const raw = (await res.json()) as Array<{
+    id: number;
+    name: string;
+    full_name: string;
+    description: string | null;
+    private: boolean;
+    clone_url: string;
+    html_url: string;
+    default_branch: string;
+    updated_at: string;
+  }>;
+
+  return raw.map((r) => ({
+    id: r.id,
+    name: r.name,
+    fullName: r.full_name,
+    description: r.description,
+    private: r.private,
+    cloneUrl: r.clone_url,
+    htmlUrl: r.html_url,
+    defaultBranch: r.default_branch,
+    updatedAt: r.updated_at,
+  }));
+}
+
+export async function cloneGitRepository(
+  input: CloneRepoInput,
+  githubToken?: string
+): Promise<{ projectPath: string; name: string }> {
+  const gitExe = resolveExecutable('git');
+  if (!gitExe) {
+    throw new Error('Git (`git`) is not installed or not found on PATH.');
+  }
+
+  const { cloneUrl, defaultFolderName, isGitHubHttps } = normalizeRepoCloneUrl(input.repoUrl);
+  const folderName =
+    input.folderName
+      ?.trim()
+      .replace(/[\\/]+/g, '-') || defaultFolderName;
+
+  fs.mkdirSync(input.parentDir, { recursive: true });
+  const targetPath = path.join(input.parentDir, folderName);
+
+  if (fs.existsSync(targetPath) && fs.readdirSync(targetPath).length > 0) {
+    throw new Error(`Destination folder already exists and is not empty: ${targetPath}`);
+  }
+
+  const args: string[] = [];
+  if (isGitHubHttps && githubToken) {
+    const basicAuth = Buffer.from(`x-access-token:${githubToken}`).toString('base64');
+    args.push('-c', `http.extraHeader=AUTHORIZATION: basic ${basicAuth}`);
+  }
+
+  args.push('clone');
+  if (input.branch?.trim()) {
+    args.push('--branch', input.branch.trim());
+  }
+  args.push(cloneUrl, targetPath);
+
+  try {
+    await execFileAsync(gitExe, args, {
+      cwd: input.parentDir,
+      timeout: 180_000,
+      env: { ...process.env, PATH: buildEnrichedPath(), GIT_TERMINAL_PROMPT: '0' },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Git clone failed: ${msg.slice(0, 320)}`);
+  }
+
+  return { projectPath: targetPath, name: folderName };
 }

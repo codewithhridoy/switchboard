@@ -5,6 +5,7 @@ import { getRunnerForProvider } from '../core/runners/index';
 import {
   AccountProfile,
   AppSettings,
+  CloneRepoInput,
   CreateAccountInput,
   CreateProjectInput,
   CreateTaskInput,
@@ -170,6 +171,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle('switchboard:import-project', (_e, input: ImportProjectInput) =>
     orchestrator.importProject(input)
   );
+  ipcMain.handle('switchboard:clone-repo', (_e, input: CloneRepoInput) =>
+    orchestrator.cloneRepoProject(input)
+  );
+  ipcMain.handle('switchboard:list-github-repos', () => orchestrator.listGitHubRepos());
   ipcMain.handle(
     'switchboard:push-project-github',
     (_e, projectId: string, isPrivate: boolean) =>

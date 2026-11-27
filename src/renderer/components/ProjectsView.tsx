@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ArrowRight,
+  Download,
   ExternalLink,
   FolderGit2,
   FolderPlus,
@@ -15,6 +16,7 @@ import { ProjectWorkspace, SwitchboardState } from '../../shared/types';
 interface ProjectsViewProps {
   state: SwitchboardState;
   onOpenCreateProject: () => void;
+  onOpenCloneRepo: () => void;
   onImportFolder: () => Promise<void>;
   onOpenProjectInDeck: (projectId: string) => void;
   onPushToGitHub: (projectId: string, isPrivate: boolean) => Promise<void>;
@@ -25,6 +27,7 @@ interface ProjectsViewProps {
 export const ProjectsView: React.FC<ProjectsViewProps> = ({
   state,
   onOpenCreateProject,
+  onOpenCloneRepo,
   onImportFolder,
   onOpenProjectInDeck,
   onPushToGitHub,
@@ -74,7 +77,11 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
             Each project keeps its own multi-turn chat threads, workspace folder, scope guard, and GitHub link — all synced via GitHub Sync.
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-sm" onClick={onOpenCloneRepo}>
+            <Download size={14} />
+            Clone Repo
+          </button>
           <button type="button" className="btn btn-sm" onClick={() => void onImportFolder()}>
             <FolderPlus size={14} />
             Import Existing Folder
@@ -92,10 +99,14 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
             No projects added yet
           </div>
-          <div style={{ fontSize: 12.5, maxWidth: 420 }}>
-            Create a brand new project (and optionally push it straight to GitHub) or import an existing folder on your Mac to keep persistent multi-model chat threads per project.
+          <div style={{ fontSize: 12.5, maxWidth: 440 }}>
+            Clone a repository from GitHub or any Git URL, import an existing folder on your Mac, or create a brand new project with persistent multi-model chat threads.
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <button type="button" className="btn" onClick={onOpenCloneRepo}>
+              <Download size={14} />
+              Clone Repo
+            </button>
             <button type="button" className="btn" onClick={() => void onImportFolder()}>
               <FolderPlus size={14} />
               Import Folder

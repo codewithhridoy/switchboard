@@ -7,6 +7,7 @@ import {
 import {
   AccountProfile,
   AppSettings,
+  CloneRepoInput,
   CreateAccountInput,
   CreateProjectInput,
   CreateTaskInput,
@@ -209,6 +210,16 @@ export function useSwitchboard() {
       const proj = await window.switchboard.importProject(input);
       await reload();
       return proj;
+    },
+    cloneRepoProject: async (input: CloneRepoInput) => {
+      if (!window.switchboard) return null;
+      const proj = await window.switchboard.cloneRepoProject(input);
+      await reload();
+      return proj;
+    },
+    listGitHubRepos: async () => {
+      if (!window.switchboard) return [];
+      return window.switchboard.listGitHubRepos();
     },
     pushProjectToGitHub: async (projectId: string, isPrivate: boolean) => {
       if (!window.switchboard) return null;
