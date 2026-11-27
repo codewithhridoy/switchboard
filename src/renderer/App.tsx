@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, FolderPlus, Plus, Settings } from 'lucide-react';
 import { AccountsView } from './components/AccountsView';
 import { AddAccountDialog } from './components/AddAccountDialog';
 import { CloneRepoDialog } from './components/CloneRepoDialog';
@@ -10,36 +9,10 @@ import { RoutingView } from './components/RoutingView';
 import { SettingsDialog } from './components/SettingsDialog';
 import { ActiveTab, Sidebar } from './components/Sidebar';
 import { SyncView } from './components/SyncView';
+import { Topbar } from './components/Topbar';
 import { UsageView } from './components/UsageView';
 import { useSwitchboard } from './hooks/useSwitchboard';
 import { applyThemePreference, getStoredTheme } from './utils/theme';
-
-const TAB_HEADERS: Record<ActiveTab, { title: string; subtitle: string }> = {
-  tasks: {
-    title: 'Command Deck',
-    subtitle: 'Queue tasks, keep multi-turn project chats, and fail over automatically on quota limits.',
-  },
-  projects: {
-    title: 'Projects',
-    subtitle: 'Create new repositories, import folders, and keep persistent multi-model threads per project.',
-  },
-  accounts: {
-    title: 'Accounts & Quotas',
-    subtitle: 'Connect Claude Team, Claude Personal, Google AI Pro (agy), Codex, and API keys.',
-  },
-  usage: {
-    title: 'Usage & Limits',
-    subtitle: 'Track 5-hour session, daily, and weekly token usage with configurable auto-switch caps.',
-  },
-  routing: {
-    title: 'Smart Routing',
-    subtitle: 'Customize which model handles each task category and how failover behaves.',
-  },
-  sync: {
-    title: 'GitHub Cloud Sync',
-    subtitle: 'Back up and restore your settings, accounts, projects, and chats via a Private GitHub Gist.',
-  },
-};
 
 export const App: React.FC = () => {
   const { state, platform, lastFailoverToast, actions } = useSwitchboard();
@@ -52,9 +25,7 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key === 'color-scheme') {
-        applyThemePreference(getStoredTheme());
-      }
+      if (e.key === 'color-scheme') applyThemePreference(getStoredTheme());
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
@@ -67,8 +38,6 @@ export const App: React.FC = () => {
       </div>
     );
   }
-
-  const header = TAB_HEADERS[activeTab];
 
   return (
     <div className="app-shell">
@@ -84,47 +53,13 @@ export const App: React.FC = () => {
       />
 
       <main className="main-area">
-        <header className="topbar">
-          <div className="topbar-title-group">
-            <h1>{header.title}</h1>
-            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-              {header.subtitle}
-            </span>
-          </div>
-
-          <div className="topbar-actions">
-            {lastFailoverToast && (
-              <div className="pill pill-warning" role="status" aria-live="polite">
-                <AlertTriangle size={12} />
-                <span>{lastFailoverToast}</span>
-              </div>
-            )}
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => setCreateProjectOpen(true)}
-            >
-              <FolderPlus size={13} />
-              New Project
-            </button>
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => setAddAccountOpen(true)}
-            >
-              <Plus size={13} />
-              Account
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost btn-icon"
-              aria-label="Open settings"
-              onClick={() => setSettingsOpen(true)}
-            >
-              <Settings size={15} />
-            </button>
-          </div>
-        </header>
+        <Topbar
+          activeTab={activeTab}
+          lastFailoverToast={lastFailoverToast}
+          onOpenCreateProject={() => setCreateProjectOpen(true)}
+          onOpenAddAccount={() => setAddAccountOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
 
         <div className="view-body scroller">
           {activeTab === 'tasks' && (
@@ -161,23 +96,15 @@ export const App: React.FC = () => {
               onImportFolder={async () => {
                 const folder = await actions.pickFolder();
                 if (folder) {
-                  const imported = await actions.importProject({
-                    path: folder,
-                    scope: 'personal',
-                  });
+                  const imported = await actions.importProject({ path: folder, scope: 'personal' });
                   if (imported) setActiveProjectId(imported.id);
                 }
               }}
-              onOpenProjectInDeck={(projId) => {
-                setActiveProjectId(projId);
-                setActiveTab('tasks');
-              }}
-              onPushToGitHub={async (projId, isPrivate) => {
-                await actions.pushProjectToGitHub(projId, isPrivate);
-              }}
-              onDeleteProject={async (projId) => {
-                if (activeProjectId === projId) setActiveProjectId(null);
-                await actions.deleteProject(projId);
+              onOpenProjectInDeck={(id) => { setActiveProjectId(id); setActiveTab('tasks'); }}
+              onPushToGitHub={async (id, priv) => { await actions.pushProjectToGitHub(id, priv); }}
+              onDeleteProject={async (id) => {
+                if (activeProjectId === id) setActiveProjectId(null);
+                await actions.deleteProject(id);
               }}
               onOpenExternal={actions.openExternal}
             />
@@ -195,11 +122,7 @@ export const App: React.FC = () => {
             />
           )}
           {activeTab === 'usage' && (
-            <UsageView
-              state={state}
-              onRefreshUsage={actions.refreshUsage}
-              onUpdateAccount={actions.updateAccount}
-            />
+            <UsageView state={state} onRefreshUsage={actions.refreshUsage} onUpdateAccount={actions.updateAccount} />
           )}
           {activeTab === 'routing' && (
             <RoutingView state={state} onUpdateRule={actions.updateRoutingRule} />
@@ -218,12 +141,7 @@ export const App: React.FC = () => {
         </div>
       </main>
 
-      <AddAccountDialog
-        open={addAccountOpen}
-        onClose={() => setAddAccountOpen(false)}
-        onCreate={actions.addAccount}
-      />
-
+      <AddAccountDialog open={addAccountOpen} onClose={() => setAddAccountOpen(false)} onCreate={actions.addAccount} />
       <CreateProjectDialog
         open={createProjectOpen}
         defaultParentDir={state.settings.defaultWorkspaceDir}
@@ -233,13 +151,9 @@ export const App: React.FC = () => {
         onPickFolder={actions.pickFolder}
         onCreate={async (input) => {
           const created = await actions.createProject(input);
-          if (created) {
-            setActiveProjectId(created.id);
-            setActiveTab('tasks');
-          }
+          if (created) { setActiveProjectId(created.id); setActiveTab('tasks'); }
         }}
       />
-
       <CloneRepoDialog
         open={cloneRepoOpen}
         defaultParentDir={state.settings.defaultWorkspaceDir}
@@ -250,13 +164,9 @@ export const App: React.FC = () => {
         onListGitHubRepos={actions.listGitHubRepos}
         onClone={async (input) => {
           const cloned = await actions.cloneRepoProject(input);
-          if (cloned) {
-            setActiveProjectId(cloned.id);
-            setActiveTab('tasks');
-          }
+          if (cloned) { setActiveProjectId(cloned.id); setActiveTab('tasks'); }
         }}
       />
-
       <SettingsDialog
         open={settingsOpen}
         settings={state.settings}

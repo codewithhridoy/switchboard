@@ -2,10 +2,8 @@ import React, { useEffect, useId, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { PROVIDER_PRESETS, ProviderPreset } from '../../shared/presets';
 import { AccountScope, CreateAccountInput } from '../../shared/types';
-import {
-  attachDialogLightDismissFallback,
-  syncFieldAriaValidation,
-} from '../utils/dialogHelpers';
+import { attachDialogLightDismissFallback, syncFieldAriaValidation } from '../utils/dialogHelpers';
+import { AccountAuthFields } from './dialogs/AccountAuthFields';
 
 interface AddAccountDialogProps {
   open: boolean;
@@ -13,11 +11,7 @@ interface AddAccountDialogProps {
   onCreate: (input: CreateAccountInput) => Promise<void>;
 }
 
-export const AddAccountDialog: React.FC<AddAccountDialogProps> = ({
-  open,
-  onClose,
-  onCreate,
-}) => {
+export const AddAccountDialog: React.FC<AddAccountDialogProps> = ({ open, onClose, onCreate }) => {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const titleId = useId();
   const [preset, setPreset] = useState<ProviderPreset>(PROVIDER_PRESETS[0]);
@@ -27,30 +21,21 @@ export const AddAccountDialog: React.FC<AddAccountDialogProps> = ({
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState(PROVIDER_PRESETS[0].defaultBaseUrl ?? '');
   const [profileDir, setProfileDir] = useState('');
-  const [useDefaultProfile, setUseDefaultProfile] = useState(
-    Boolean(PROVIDER_PRESETS[0].defaultUseDefaultProfile)
-  );
+  const [useDefaultProfile, setUseDefaultProfile] = useState(Boolean(PROVIDER_PRESETS[0].defaultUseDefaultProfile));
 
   useEffect(() => {
     const el = dialogRef.current;
     if (!el) return;
-    if (open && !el.open) {
-      el.showModal();
-    } else if (!open && el.open) {
-      el.close();
-    }
+    if (open && !el.open) el.showModal();
+    else if (!open && el.open) el.close();
   }, [open]);
 
   useEffect(() => {
     const el = dialogRef.current;
     if (!el) return;
-    const cleanupFallback = attachDialogLightDismissFallback(el);
-    const handleClose = () => onClose();
-    el.addEventListener('close', handleClose);
-    return () => {
-      cleanupFallback();
-      el.removeEventListener('close', handleClose);
-    };
+    const cleanup = attachDialogLightDismissFallback(el);
+    el.addEventListener('close', onClose);
+    return () => { cleanup(); el.removeEventListener('close', onClose); };
   }, [onClose]);
 
   const selectPreset = (next: ProviderPreset) => {
@@ -68,12 +53,9 @@ export const AddAccountDialog: React.FC<AddAccountDialogProps> = ({
     e.preventDefault();
     const form = e.currentTarget;
     if (!form.checkValidity()) {
-      form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select').forEach((el) => {
-        syncFieldAriaValidation(el);
-      });
+      form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select').forEach(syncFieldAriaValidation);
       return;
     }
-
     await onCreate({
       name: name.trim(),
       provider: preset.provider,
@@ -90,219 +72,66 @@ export const AddAccountDialog: React.FC<AddAccountDialogProps> = ({
   };
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="sb-dialog"
-      aria-labelledby={titleId}
-      {...({ closedby: 'any' } as Record<string, string>)}
-    >
+    <dialog ref={dialogRef} className="sb-dialog" aria-labelledby={titleId} {...({ closedby: 'any' } as Record<string, string>)}>
       <div className="dialog-inner">
         <div className="dialog-header">
           <h2 id={titleId}>Connect AI Account</h2>
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon"
-            aria-label="Close dialog"
-            onClick={() => dialogRef.current?.close()}
-          >
+          <button type="button" className="btn btn-ghost btn-icon" aria-label="Close dialog" onClick={() => dialogRef.current?.close()}>
             <X size={16} />
           </button>
         </div>
-
         <form onSubmit={handleSubmit} noValidate style={{ display: 'contents' }}>
           <div className="dialog-body scroller">
             <div>
-              <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>
-                Choose Provider Preset
-              </div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>Choose Provider Preset</div>
               <div className="preset-grid">
                 {PROVIDER_PRESETS.map((p) => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    className={`preset-tile ${preset.id === p.id ? 'active' : ''}`}
-                    onClick={() => selectPreset(p)}
-                  >
+                  <button key={p.id} type="button" className={`preset-tile ${preset.id === p.id ? 'active' : ''}`} onClick={() => selectPreset(p)}>
                     <strong style={{ fontSize: 12.5 }}>{p.label}</strong>
-                    <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                      {p.subtitle}
-                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{p.subtitle}</span>
                   </button>
                 ))}
               </div>
             </div>
-
             <div className="field">
               <label htmlFor="acc-name">Account Label</label>
-              <span id="acc-name-hint" className="field-hint">
-                Give each subscription a clear name (e.g. Claude Personal, Claude Team, Google Pro).
-              </span>
-              <input
-                id="acc-name"
-                className="input-field"
-                type="text"
-                required
-                minLength={2}
-                value={name}
-                aria-invalid="false"
-                aria-describedby="acc-name-hint"
-                data-error="acc-name-error"
-                onChange={(e) => {
-                  setName(e.target.value);
-                  syncFieldAriaValidation(e.target);
-                }}
-                onBlur={(e) => syncFieldAriaValidation(e.target)}
-              />
-              <div id="acc-name-error" className="field-error">
-                Please enter an account name with at least 2 characters.
-              </div>
+              <span id="acc-name-hint" className="field-hint">Give each subscription a clear name (e.g. Claude Personal, Claude Team, Google Pro).</span>
+              <input id="acc-name" className="input-field" type="text" required minLength={2} value={name} aria-invalid="false" aria-describedby="acc-name-hint" data-error="acc-name-error" onChange={(e) => { setName(e.target.value); syncFieldAriaValidation(e.target); }} onBlur={(e) => syncFieldAriaValidation(e.target)} />
+              <div id="acc-name-error" className="field-error">Please enter an account name with at least 2 characters.</div>
             </div>
-
             <div className="field-row-2">
               <div className="field">
                 <label htmlFor="acc-model">Model Identifier</label>
-                <span id="acc-model-hint" className="field-hint">
-                  Pick a preset model or type any supported model ID.
-                </span>
-                <input
-                  id="acc-model"
-                  className="input-field mono"
-                  type="text"
-                  list="preset-models"
-                  required
-                  value={model}
-                  aria-invalid="false"
-                  aria-describedby="acc-model-hint"
-                  data-error="acc-model-error"
-                  onChange={(e) => {
-                    setModel(e.target.value);
-                    syncFieldAriaValidation(e.target);
-                  }}
-                  onBlur={(e) => syncFieldAriaValidation(e.target)}
-                />
-                <div id="acc-model-error" className="field-error">
-                  Please enter a valid model identifier.
-                </div>
-                <datalist id="preset-models">
-                  {preset.models.map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
+                <span id="acc-model-hint" className="field-hint">Pick a preset model or type any supported model ID.</span>
+                <input id="acc-model" className="input-field mono" type="text" list="preset-models" required value={model} aria-invalid="false" aria-describedby="acc-model-hint" data-error="acc-model-error" onChange={(e) => { setModel(e.target.value); syncFieldAriaValidation(e.target); }} onBlur={(e) => syncFieldAriaValidation(e.target)} />
+                <div id="acc-model-error" className="field-error">Please enter a valid model identifier.</div>
+                <datalist id="preset-models">{preset.models.map((m) => <option key={m} value={m} />)}</datalist>
               </div>
-
               <div className="field">
                 <label htmlFor="acc-scope">Account Scope</label>
                 <span className="field-hint">Controls Team vs Personal isolation.</span>
-                <select
-                  id="acc-scope"
-                  className="select-compact"
-                  value={scope}
-                  onChange={(e) => setScope(e.target.value as AccountScope)}
-                >
+                <select id="acc-scope" className="select-compact" value={scope} onChange={(e) => setScope(e.target.value as AccountScope)}>
                   <option value="personal">Personal</option>
                   <option value="team">Team / Work</option>
                   <option value="any">Any Workspace</option>
                 </select>
               </div>
             </div>
-
-            {preset.supportsIsolatedProfile && (
-              <div className="field">
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={useDefaultProfile}
-                    onChange={(e) => setUseDefaultProfile(e.target.checked)}
-                  />
-                  Use existing system CLI login (~/.claude / ~/.gemini)
-                </label>
-                {!useDefaultProfile && (
-                  <>
-                    <label htmlFor="acc-profile" style={{ marginTop: 6 }}>
-                      Isolated Profile Directory (Optional)
-                    </label>
-                    <span className="field-hint">
-                      Leave blank to auto-create an isolated folder under ~/.switchboard/profiles/ so you can run two Claude accounts on the same Gmail side by side.
-                    </span>
-                    <input
-                      id="acc-profile"
-                      className="input-field mono"
-                      type="text"
-                      placeholder="Auto-generated isolated profile directory"
-                      value={profileDir}
-                      onChange={(e) => setProfileDir(e.target.value)}
-                    />
-                  </>
-                )}
-              </div>
-            )}
-
-            {preset.requiresApiKey && (
-              <>
-                <div className="field">
-                  <label htmlFor="acc-apikey">API Key</label>
-                  <span id="acc-apikey-hint" className="field-hint">
-                    Stored locally in ~/.switchboard/state.json. Optional for local Ollama endpoints.
-                  </span>
-                  <input
-                    id="acc-apikey"
-                    className="input-field mono"
-                    type="password"
-                    required={!(baseUrl && /localhost|127\.0\.0\.1/.test(baseUrl))}
-                    placeholder="sk-..."
-                    value={apiKey}
-                    aria-invalid="false"
-                    aria-describedby="acc-apikey-hint"
-                    data-error="acc-apikey-error"
-                    onChange={(e) => {
-                      setApiKey(e.target.value);
-                      syncFieldAriaValidation(e.target);
-                    }}
-                    onBlur={(e) => syncFieldAriaValidation(e.target)}
-                  />
-                  <div id="acc-apikey-error" className="field-error">
-                    Please enter an API key (or point Base URL to localhost for Ollama).
-                  </div>
-                </div>
-
-                <div className="field">
-                  <label htmlFor="acc-baseurl">Base URL</label>
-                  <span id="acc-baseurl-hint" className="field-hint">
-                    Format: https://api.provider.com or http://localhost:11434/v1
-                  </span>
-                  <input
-                    id="acc-baseurl"
-                    className="input-field mono"
-                    type="url"
-                    value={baseUrl}
-                    aria-invalid="false"
-                    aria-describedby="acc-baseurl-hint"
-                    data-error="acc-baseurl-error"
-                    onChange={(e) => {
-                      setBaseUrl(e.target.value);
-                      syncFieldAriaValidation(e.target);
-                    }}
-                    onBlur={(e) => syncFieldAriaValidation(e.target)}
-                  />
-                  <div id="acc-baseurl-error" className="field-error">
-                    Please enter a valid URL starting with http:// or https://.
-                  </div>
-                </div>
-              </>
-            )}
+            <AccountAuthFields
+              preset={preset}
+              useDefaultProfile={useDefaultProfile}
+              profileDir={profileDir}
+              apiKey={apiKey}
+              baseUrl={baseUrl}
+              onChangeUseDefault={setUseDefaultProfile}
+              onChangeProfileDir={setProfileDir}
+              onChangeApiKey={setApiKey}
+              onChangeBaseUrl={setBaseUrl}
+            />
           </div>
-
           <div className="dialog-footer">
-            <button
-              type="button"
-              className="btn"
-              onClick={() => dialogRef.current?.close()}
-            >
-              Cancel
-            </button>
-            <button type="submit" className="btn btn-primary">
-              Add Account
-            </button>
+            <button type="button" className="btn" onClick={() => dialogRef.current?.close()}>Cancel</button>
+            <button type="submit" className="btn btn-primary">Add Account</button>
           </div>
         </form>
       </div>
