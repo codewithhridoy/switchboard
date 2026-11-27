@@ -479,6 +479,25 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
             </button>
             <button
               type="button"
+              className="btn btn-sm"
+              disabled={busyAction !== null || openPr.draft || openPr.mergeable === false}
+              title={
+                openPr.draft
+                  ? 'Mark PR ready for review on GitHub before merging'
+                  : openPr.mergeable === false
+                    ? 'Resolve merge conflicts before merging'
+                    : `Create a merge commit for PR #${openPr.number} into ${openPr.baseBranch}`
+              }
+              onClick={() => {
+                setMergeMethod('merge');
+                setMergeOpen(true);
+              }}
+            >
+              <GitMerge size={12} />
+              Merge
+            </button>
+            <button
+              type="button"
               className="btn btn-primary btn-sm"
               disabled={busyAction !== null || openPr.draft || openPr.mergeable === false}
               title={
@@ -486,12 +505,15 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
                   ? 'Mark PR ready for review on GitHub before merging'
                   : openPr.mergeable === false
                     ? 'Resolve merge conflicts before merging'
-                    : `Merge PR #${openPr.number} into ${openPr.baseBranch}`
+                    : `Squash and merge PR #${openPr.number} into ${openPr.baseBranch}`
               }
-              onClick={() => setMergeOpen(true)}
+              onClick={() => {
+                setMergeMethod('squash');
+                setMergeOpen(true);
+              }}
             >
               <GitMerge size={12} />
-              Merge PR
+              Squash &amp; Merge
             </button>
           </div>
         </div>
@@ -960,17 +982,60 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
                 </div>
 
                 <div className="field">
-                  <label htmlFor="merge-method">Merge Strategy</label>
-                  <select
-                    id="merge-method"
-                    className="select-compact"
-                    value={mergeMethod}
-                    onChange={(e) => setMergeMethod(e.target.value as MergeMethod)}
+                  <label>Merge Strategy</label>
+                  <div
+                    role="radiogroup"
+                    aria-label="Merge strategy"
+                    style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}
                   >
-                    <option value="squash">Squash and merge (Recommended — 1 clean commit)</option>
-                    <option value="merge">Create a merge commit</option>
-                    <option value="rebase">Rebase and merge</option>
-                  </select>
+                    {(
+                      [
+                        {
+                          id: 'squash' as MergeMethod,
+                          label: 'Squash & Merge',
+                          hint: '1 clean commit',
+                        },
+                        {
+                          id: 'merge' as MergeMethod,
+                          label: 'Merge Commit',
+                          hint: 'Keep all commits',
+                        },
+                        {
+                          id: 'rebase' as MergeMethod,
+                          label: 'Rebase & Merge',
+                          hint: 'Linear history',
+                        },
+                      ] as const
+                    ).map((opt) => {
+                      const active = mergeMethod === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          onClick={() => setMergeMethod(opt.id)}
+                          style={{
+                            padding: '9px 10px',
+                            borderRadius: 'var(--radius-md)',
+                            border: `1px solid ${active ? 'var(--accent)' : 'var(--border-default)'}`,
+                            background: active ? 'var(--accent-soft)' : 'var(--bg-elevated)',
+                            color: 'var(--text-primary)',
+                            textAlign: 'left',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 2,
+                          }}
+                        >
+                          <span style={{ fontSize: 12.5, fontWeight: 600 }}>{opt.label}</span>
+                          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                            {opt.hint}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {mergeMethod !== 'rebase' && (
@@ -1020,7 +1085,11 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
                 </button>
                 <button type="submit" className="btn btn-primary" disabled={busyAction === 'merge'}>
                   {busyAction === 'merge' ? <Loader2 size={13} className="spin" /> : <GitMerge size={13} />}
-                  Confirm Merge
+                  {mergeMethod === 'squash'
+                    ? 'Squash & Merge'
+                    : mergeMethod === 'rebase'
+                      ? 'Rebase & Merge'
+                      : 'Merge Pull Request'}
                 </button>
               </div>
             </form>
