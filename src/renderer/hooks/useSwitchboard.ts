@@ -15,6 +15,7 @@ import {
   CreateTaskInput,
   GitHubSyncConfig,
   ImportProjectInput,
+  MergePrInput,
   RoutingRule,
   SwitchboardState,
   TaskStreamEvent,
@@ -348,6 +349,14 @@ export function useSwitchboard() {
     gitCreatePr: async (input: CreatePrInput) => {
       if (!window.switchboard) throw new Error('Desktop app required.');
       return window.switchboard.gitCreatePr(input);
+    },
+    gitGetCurrentPr: async (cwd: string) => {
+      if (!window.switchboard) return null;
+      return window.switchboard.gitGetCurrentPr(cwd);
+    },
+    gitMergePr: async (input: MergePrInput) => {
+      if (!window.switchboard) throw new Error('Desktop app required.');
+      return window.switchboard.gitMergePr(input);
     },
     // Tasks
     enqueueTask: async (input: CreateTaskInput) => {

@@ -2,7 +2,14 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { CreatePrInput, GitChangedFile, GitWorkspaceStatus } from '../shared/types';
+import {
+  CreatePrInput,
+  GitChangedFile,
+  GitHubPullRequestInfo,
+  GitWorkspaceStatus,
+  MergePrInput,
+  MergePrResult,
+} from '../shared/types';
 import { detectGitHubRemote } from './projects';
 import { buildEnrichedPath, resolveExecutable } from './runners/cliEnv';
 
@@ -406,6 +413,204 @@ export async function createGitHubPullRequest(
 
   const pr = (await res.json()) as { html_url: string; number: number };
   return { url: pr.html_url, number: pr.number };
+}
+
+export async function getOpenPullRequestForBranch(
+  cwd: string,
+  githubToken: string
+): Promise<GitHubPullRequestInfo | null> {
+  const status = await getGitWorkspaceStatus(cwd);
+  if (!status.isGitRepo || !status.githubFullName || !status.currentBranch || status.currentBranch === 'HEAD') {
+    return null;
+  }
+
+  const owner = status.githubFullName.split('/')[0];
+  const headers = {
+    authorization: `Bearer ${githubToken}`,
+    accept: 'application/vnd.github+json',
+    'user-agent': 'Switchboard-AI',
+  };
+
+  const listRes = await fetch(
+    `https://api.github.com/repos/${status.githubFullName}/pulls?state=open&head=${encodeURIComponent(`${owner}:${status.currentBranch}`)}`,
+    { headers }
+  );
+  if (!listRes.ok) {
+    return null;
+  }
+
+  const list = (await listRes.json()) as Array<{
+    number: number;
+    title: string;
+    html_url: string;
+    state: 'open' | 'closed';
+    draft?: boolean;
+    head: { ref: string };
+    base: { ref: string };
+  }>;
+  if (!Array.isArray(list) || list.length === 0) {
+    return null;
+  }
+
+  const summary = list[0];
+
+  // Fetch full PR details for mergeable state and diff counts
+  try {
+    const detailRes = await fetch(
+      `https://api.github.com/repos/${status.githubFullName}/pulls/${summary.number}`,
+      { headers }
+    );
+    if (detailRes.ok) {
+      const detail = (await detailRes.json()) as {
+        number: number;
+        title: string;
+        html_url: string;
+        state: 'open' | 'closed';
+        draft?: boolean;
+        mergeable?: boolean | null;
+        mergeable_state?: string;
+        changed_files?: number;
+        additions?: number;
+        deletions?: number;
+        commits?: number;
+        head: { ref: string };
+        base: { ref: string };
+      };
+      return {
+        number: detail.number,
+        title: detail.title,
+        url: detail.html_url,
+        state: detail.state,
+        draft: Boolean(detail.draft),
+        headBranch: detail.head.ref,
+        baseBranch: detail.base.ref,
+        mergeable: detail.mergeable ?? null,
+        mergeableState: detail.mergeable_state,
+        changedFiles: detail.changed_files,
+        additions: detail.additions,
+        deletions: detail.deletions,
+        commits: detail.commits,
+      };
+    }
+  } catch {
+    // Fall back to summary
+  }
+
+  return {
+    number: summary.number,
+    title: summary.title,
+    url: summary.html_url,
+    state: summary.state,
+    draft: Boolean(summary.draft),
+    headBranch: summary.head.ref,
+    baseBranch: summary.base.ref,
+    mergeable: null,
+  };
+}
+
+export async function mergeGitHubPullRequest(
+  input: MergePrInput,
+  githubToken: string
+): Promise<MergePrResult> {
+  const status = await getGitWorkspaceStatus(input.cwd);
+  if (!status.githubFullName) {
+    throw new Error('This repository does not have a GitHub `origin` remote.');
+  }
+
+  const githubFullName = status.githubFullName;
+  const headers = {
+    authorization: `Bearer ${githubToken}`,
+    accept: 'application/vnd.github+json',
+    'content-type': 'application/json',
+    'user-agent': 'Switchboard-AI',
+  };
+
+  const payload: Record<string, string> = {
+    merge_method: input.mergeMethod || 'squash',
+  };
+  if (input.commitTitle?.trim()) {
+    payload.commit_title = input.commitTitle.trim();
+  }
+
+  const res = await fetch(
+    `https://api.github.com/repos/${githubFullName}/pulls/${input.prNumber}/merge`,
+    {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+    }
+  );
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(formatGitHubApiError(res.status, errText));
+  }
+
+  const data = (await res.json()) as { merged?: boolean; sha?: string; message?: string };
+  let deletedBranch = false;
+  let switchedToBase: string | undefined;
+
+  const headBranch = input.headBranch?.trim() || status.currentBranch;
+  const baseBranch = input.baseBranch?.trim() || 'main';
+
+  // Optional best-practice cleanup: delete merged remote head branch
+  if (input.deleteBranch && headBranch && headBranch !== baseBranch) {
+    try {
+      const delRes = await fetch(
+        `https://api.github.com/repos/${githubFullName}/git/refs/heads/${encodeURIComponent(headBranch)}`,
+        { method: 'DELETE', headers }
+      );
+      if (delRes.ok || delRes.status === 204 || delRes.status === 422) {
+        deletedBranch = true;
+      }
+    } catch {
+      // Non-fatal: repository may auto-delete head branches
+    }
+  }
+
+  // Optional best-practice sync: switch local checkout back to base branch & pull latest
+  if (input.syncBaseBranch && status.files.length === 0 && baseBranch) {
+    try {
+      await runGit(input.cwd, ['checkout', baseBranch]);
+      let rawOriginUrl = '';
+      try {
+        const { stdout: urlOut } = await runGit(input.cwd, ['remote', 'get-url', 'origin']);
+        rawOriginUrl = urlOut.trim();
+      } catch {
+        // ignore
+      }
+      const pullArgs: string[] = [];
+      if (githubToken && /^https?:\/\/github\.com\//i.test(rawOriginUrl)) {
+        const basicAuth = Buffer.from(`x-access-token:${githubToken}`).toString('base64');
+        pullArgs.push(
+          '-c',
+          'credential.helper=',
+          '-c',
+          `http.extraHeader=AUTHORIZATION: basic ${basicAuth}`
+        );
+      }
+      pullArgs.push('pull', '--ff-only', 'origin', baseBranch);
+      await runGit(input.cwd, pullArgs);
+      switchedToBase = baseBranch;
+
+      // Also prune local merged branch if user chose deleteBranch
+      if (input.deleteBranch && headBranch && headBranch !== baseBranch) {
+        await runGit(input.cwd, ['branch', '-d', headBranch]).catch(() => {
+          // Squash merges aren't detected as merged by `-d`; leave safe or ignore
+        });
+      }
+    } catch {
+      // Non-fatal: PR is already merged on GitHub
+    }
+  }
+
+  return {
+    merged: data.merged !== false,
+    sha: data.sha,
+    message: data.message || `Pull Request #${input.prNumber} merged.`,
+    deletedBranch,
+    switchedToBase,
+  };
 }
 
 function emptyStatus(cwd: string): GitWorkspaceStatus {

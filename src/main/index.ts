@@ -9,6 +9,8 @@ import {
   discardFileChanges,
   getFileDiff,
   getGitWorkspaceStatus,
+  getOpenPullRequestForBranch,
+  mergeGitHubPullRequest,
   pushCurrentBranch,
   stageAndCommitAll,
 } from '../core/gitWorkspace';
@@ -25,6 +27,7 @@ import {
   CreateTaskInput,
   GitHubSyncConfig,
   ImportProjectInput,
+  MergePrInput,
   RoutingRule,
   TaskAttachment,
   TaskStreamEvent,
@@ -252,6 +255,18 @@ function registerIpcHandlers(): void {
       throw new Error('Connect your GitHub account in GitHub Sync (or sign into `gh`) to create Pull Requests.');
     }
     return createGitHubPullRequest(input, token);
+  });
+  ipcMain.handle('switchboard:git-get-current-pr', async (_e, cwd: string) => {
+    const token = await orchestrator.resolveOptionalGitHubToken();
+    if (!token) return null;
+    return getOpenPullRequestForBranch(cwd, token);
+  });
+  ipcMain.handle('switchboard:git-merge-pr', async (_e, input: MergePrInput) => {
+    const token = await orchestrator.resolveOptionalGitHubToken();
+    if (!token) {
+      throw new Error('Connect your GitHub account in GitHub Sync (or sign into `gh`) to merge Pull Requests.');
+    }
+    return mergeGitHubPullRequest(input, token);
   });
 
   ipcMain.handle('switchboard:enqueue-task', (_e, input: CreateTaskInput) =>

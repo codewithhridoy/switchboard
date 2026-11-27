@@ -148,6 +148,8 @@ export const App: React.FC = () => {
               onGitCommitAll={actions.gitCommitAll}
               onGitPush={actions.gitPush}
               onGitCreatePr={actions.gitCreatePr}
+              onGitGetCurrentPr={actions.gitGetCurrentPr}
+              onGitMergePr={actions.gitMergePr}
               onOpenExternal={actions.openExternal}
             />
           )}

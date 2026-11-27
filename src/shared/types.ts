@@ -49,6 +49,43 @@ export interface CreatePrInput {
   newBranchName?: string;
 }
 
+export type MergeMethod = 'squash' | 'merge' | 'rebase';
+
+export interface GitHubPullRequestInfo {
+  number: number;
+  title: string;
+  url: string;
+  state: 'open' | 'closed';
+  draft: boolean;
+  headBranch: string;
+  baseBranch: string;
+  mergeable: boolean | null;
+  mergeableState?: string;
+  changedFiles?: number;
+  additions?: number;
+  deletions?: number;
+  commits?: number;
+}
+
+export interface MergePrInput {
+  cwd: string;
+  prNumber: number;
+  mergeMethod: MergeMethod;
+  commitTitle?: string;
+  deleteBranch?: boolean;
+  syncBaseBranch?: boolean;
+  headBranch?: string;
+  baseBranch?: string;
+}
+
+export interface MergePrResult {
+  merged: boolean;
+  sha?: string;
+  message: string;
+  deletedBranch?: boolean;
+  switchedToBase?: string;
+}
+
 export type TaskCategory =
   | 'architecture'
   | 'coding'

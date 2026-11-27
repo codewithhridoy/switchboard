@@ -9,10 +9,13 @@ import {
   CreatePrInput,
   CreateProjectInput,
   CreateTaskInput,
+  GitHubPullRequestInfo,
   GitHubRepoSummary,
   GitHubSyncConfig,
   GitWorkspaceStatus,
   ImportProjectInput,
+  MergePrInput,
+  MergePrResult,
   OrchestratedTask,
   ProjectWorkspace,
   RoutingRule,
@@ -69,6 +72,8 @@ export interface SwitchboardApi {
   gitCommitAll: (cwd: string, message: string) => Promise<{ commitHash: string }>;
   gitPush: (cwd: string) => Promise<{ branch: string }>;
   gitCreatePr: (input: CreatePrInput) => Promise<{ url: string; number: number }>;
+  gitGetCurrentPr: (cwd: string) => Promise<GitHubPullRequestInfo | null>;
+  gitMergePr: (input: MergePrInput) => Promise<MergePrResult>;
   // Tasks
   enqueueTask: (input: CreateTaskInput) => Promise<OrchestratedTask>;
   retryTask: (

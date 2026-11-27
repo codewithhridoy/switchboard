@@ -2,12 +2,14 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   checkoutBranch,
   formatGitHubApiError,
   getFileDiff,
   getGitWorkspaceStatus,
+  getOpenPullRequestForBranch,
+  mergeGitHubPullRequest,
   stageAndCommitAll,
 } from '../gitWorkspace';
 
@@ -72,5 +74,102 @@ describe('gitWorkspace', () => {
     expect(formatGitHubApiError(422, raw)).toBe(
       'No commits between main and feat/p0-followups'
     );
+  });
+
+  it('fetches open PR for current branch and merges via GitHub API', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-git-pr-'));
+    tempDirs.push(dir);
+
+    execFileSync('git', ['init', '-b', 'main'], { cwd: dir });
+    execFileSync('git', ['config', 'user.email', 'test@switchboard.dev'], { cwd: dir });
+    execFileSync('git', ['config', 'user.name', 'Switchboard Test'], { cwd: dir });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/octocat/demo.git'], {
+      cwd: dir,
+    });
+    fs.writeFileSync(path.join(dir, 'index.ts'), 'export const a = 1;\n', 'utf8');
+    execFileSync('git', ['add', '-A'], { cwd: dir });
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: dir });
+    await checkoutBranch(dir, 'feat/pr-merge', true);
+
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/pulls?state=open')) {
+        return new Response(
+          JSON.stringify([
+            {
+              number: 7,
+              title: 'Add merge flow',
+              html_url: 'https://github.com/octocat/demo/pull/7',
+              state: 'open',
+              draft: false,
+              head: { ref: 'feat/pr-merge' },
+              base: { ref: 'main' },
+            },
+          ]),
+          { status: 200 }
+        );
+      }
+      if (url.endsWith('/pulls/7') && (!init?.method || init.method === 'GET')) {
+        return new Response(
+          JSON.stringify({
+            number: 7,
+            title: 'Add merge flow',
+            html_url: 'https://github.com/octocat/demo/pull/7',
+            state: 'open',
+            draft: false,
+            mergeable: true,
+            mergeable_state: 'clean',
+            changed_files: 3,
+            additions: 40,
+            deletions: 5,
+            commits: 1,
+            head: { ref: 'feat/pr-merge' },
+            base: { ref: 'main' },
+          }),
+          { status: 200 }
+        );
+      }
+      if (url.endsWith('/pulls/7/merge') && init?.method === 'PUT') {
+        return new Response(
+          JSON.stringify({ merged: true, sha: 'abc1234', message: 'Pull Request successfully merged' }),
+          { status: 200 }
+        );
+      }
+      if (url.includes('/git/refs/heads/') && init?.method === 'DELETE') {
+        return new Response(null, { status: 204 });
+      }
+      return new Response('Not Found', { status: 404 });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const pr = await getOpenPullRequestForBranch(dir, 'fake-token');
+      expect(pr).toMatchObject({
+        number: 7,
+        title: 'Add merge flow',
+        headBranch: 'feat/pr-merge',
+        baseBranch: 'main',
+        mergeable: true,
+        changedFiles: 3,
+      });
+
+      const merged = await mergeGitHubPullRequest(
+        {
+          cwd: dir,
+          prNumber: 7,
+          mergeMethod: 'squash',
+          commitTitle: 'Add merge flow (#7)',
+          deleteBranch: true,
+          syncBaseBranch: false,
+          headBranch: 'feat/pr-merge',
+          baseBranch: 'main',
+        },
+        'fake-token'
+      );
+      expect(merged.merged).toBe(true);
+      expect(merged.sha).toBe('abc1234');
+      expect(merged.deletedBranch).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

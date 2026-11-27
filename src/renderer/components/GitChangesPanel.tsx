@@ -4,6 +4,7 @@ import {
   ExternalLink,
   GitBranch,
   GitCommitHorizontal,
+  GitMerge,
   GitPullRequest,
   Loader2,
   Plus,
@@ -12,7 +13,14 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { CreatePrInput, GitWorkspaceStatus } from '../../shared/types';
+import {
+  CreatePrInput,
+  GitHubPullRequestInfo,
+  GitWorkspaceStatus,
+  MergeMethod,
+  MergePrInput,
+  MergePrResult,
+} from '../../shared/types';
 import { attachDialogLightDismissFallback } from '../utils/dialogHelpers';
 
 interface GitChangesPanelProps {
@@ -26,6 +34,8 @@ interface GitChangesPanelProps {
   onCommitAll: (cwd: string, message: string) => Promise<{ commitHash: string }>;
   onPush: (cwd: string) => Promise<{ branch: string }>;
   onCreatePr: (input: CreatePrInput) => Promise<{ url: string; number: number }>;
+  onGetCurrentPr: (cwd: string) => Promise<GitHubPullRequestInfo | null>;
+  onMergePr: (input: MergePrInput) => Promise<MergePrResult>;
   onOpenExternal: (url: string) => Promise<void>;
 }
 
@@ -53,6 +63,8 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
   onCommitAll,
   onPush,
   onCreatePr,
+  onGetCurrentPr,
+  onMergePr,
   onOpenExternal,
 }) => {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -78,6 +90,68 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
   const [prCommitMessage, setPrCommitMessage] = useState('');
   const [prNewBranch, setPrNewBranch] = useState('');
   const [prError, setPrError] = useState<string | null>(null);
+
+  // Active Open PR & Merge PR Modal state
+  const [openPr, setOpenPr] = useState<GitHubPullRequestInfo | null>(null);
+  const [loadingPr, setLoadingPr] = useState(false);
+  const mergeDialogRef = useRef<HTMLDialogElement | null>(null);
+  const mergeTitleId = useId();
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeMethod, setMergeMethod] = useState<MergeMethod>('squash');
+  const [mergeCommitTitle, setMergeCommitTitle] = useState('');
+  const [mergeDeleteBranch, setMergeDeleteBranch] = useState(true);
+  const [mergeSyncBase, setMergeSyncBase] = useState(true);
+  const [mergeError, setMergeError] = useState<string | null>(null);
+
+  const refreshOpenPr = async (cwd: string, hasRemote: boolean) => {
+    if (!hasRemote) {
+      setOpenPr(null);
+      return;
+    }
+    setLoadingPr(true);
+    try {
+      const pr = await onGetCurrentPr(cwd);
+      setOpenPr(pr);
+    } catch {
+      setOpenPr(null);
+    } finally {
+      setLoadingPr(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!status?.isGitRepo) {
+      setOpenPr(null);
+      return;
+    }
+    void refreshOpenPr(status.cwd, Boolean(status.githubFullName));
+  }, [status?.cwd, status?.currentBranch, status?.githubFullName]);
+
+  useEffect(() => {
+    const el = mergeDialogRef.current;
+    if (!el) return;
+    if (mergeOpen && openPr && !el.open) {
+      setMergeCommitTitle(`${openPr.title} (#${openPr.number})`);
+      setMergeDeleteBranch(true);
+      setMergeSyncBase((status?.files.length ?? 0) === 0);
+      setMergeError(null);
+      el.showModal();
+    } else if (!mergeOpen && el.open) {
+      el.close();
+    }
+  }, [mergeOpen, openPr]);
+
+  useEffect(() => {
+    const el = mergeDialogRef.current;
+    if (!el) return;
+    const cleanup = attachDialogLightDismissFallback(el);
+    const onClose = () => setMergeOpen(false);
+    el.addEventListener('close', onClose);
+    return () => {
+      cleanup();
+      el.removeEventListener('close', onClose);
+    };
+  }, []);
 
   useEffect(() => {
     if (!commitMsg && defaultCommitMessage) {
@@ -294,32 +368,129 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
             Push
           </button>
 
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            disabled={!status.githubFullName || busyAction !== null}
-            title={
-              status.githubFullName
-                ? `Create Pull Request on ${status.githubFullName}`
-                : 'Add a GitHub origin remote to create PRs'
-            }
-            onClick={() => setPrOpen(true)}
-          >
-            <GitPullRequest size={12} />
-            Create PR
-          </button>
+          {openPr ? (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={busyAction !== null}
+              title={`Merge Pull Request #${openPr.number} (${openPr.headBranch} → ${openPr.baseBranch})`}
+              onClick={() => setMergeOpen(true)}
+            >
+              <GitMerge size={12} />
+              Merge PR #{openPr.number}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={!status.githubFullName || busyAction !== null}
+              title={
+                status.githubFullName
+                  ? `Create Pull Request on ${status.githubFullName}`
+                  : 'Add a GitHub origin remote to create PRs'
+              }
+              onClick={() => setPrOpen(true)}
+            >
+              <GitPullRequest size={12} />
+              Create PR
+            </button>
+          )}
 
           <button
             type="button"
             className="btn btn-ghost btn-icon"
-            title="Refresh Git status"
+            title="Refresh Git status and PR state"
             aria-label="Refresh Git status"
-            onClick={() => void onRefresh()}
+            onClick={() => {
+              void onRefresh();
+              void refreshOpenPr(status.cwd, Boolean(status.githubFullName));
+            }}
           >
-            <RefreshCw size={13} className={loading ? 'spin' : ''} />
+            <RefreshCw size={13} className={loading || loadingPr ? 'spin' : ''} />
           </button>
         </div>
       </div>
+
+      {/* Active Pull Request Bar (Merge directly from Switchboard) */}
+      {openPr && (
+        <div
+          style={{
+            padding: '8px 14px',
+            borderBottom: '1px solid var(--border-subtle)',
+            background: 'var(--bg-elevated)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+            flexWrap: 'wrap',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+            <GitPullRequest size={14} style={{ color: 'var(--success)', flexShrink: 0 }} />
+            <span className="pill pill-success mono" style={{ flexShrink: 0 }}>
+              PR #{openPr.number}
+            </span>
+            <span
+              style={{
+                fontSize: 12.5,
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title={openPr.title}
+            >
+              {openPr.title}
+            </span>
+            <span className="pill mono" style={{ flexShrink: 0 }}>
+              {openPr.headBranch} → {openPr.baseBranch}
+            </span>
+            {openPr.draft && <span className="pill pill-warning">Draft</span>}
+            {openPr.mergeable === false && (
+              <span className="pill pill-danger">Merge Conflicts</span>
+            )}
+            {typeof openPr.changedFiles === 'number' && (
+              <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>
+                {openPr.changedFiles} files
+                {typeof openPr.additions === 'number' && (
+                  <span style={{ color: 'var(--success)', marginLeft: 5 }}>+{openPr.additions}</span>
+                )}
+                {typeof openPr.deletions === 'number' && (
+                  <span style={{ color: 'var(--danger)', marginLeft: 4 }}>-{openPr.deletions}</span>
+                )}
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => void onOpenExternal(openPr.url)}
+            >
+              Open PR <ExternalLink size={11} />
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={busyAction !== null || openPr.draft || openPr.mergeable === false}
+              title={
+                openPr.draft
+                  ? 'Mark PR ready for review on GitHub before merging'
+                  : openPr.mergeable === false
+                    ? 'Resolve merge conflicts before merging'
+                    : `Merge PR #${openPr.number} into ${openPr.baseBranch}`
+              }
+              onClick={() => setMergeOpen(true)}
+            >
+              <GitMerge size={12} />
+              Merge PR
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Commit bar when there are changed files */}
       {status.files.length > 0 && (
@@ -531,6 +702,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
                 });
                 prDialogRef.current?.close();
                 await onRefresh();
+                await refreshOpenPr(status.cwd, true);
               } catch (err) {
                 setPrError(cleanErrorMessage(err));
               } finally {
@@ -674,6 +846,167 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
               </button>
             </div>
           </form>
+        </div>
+      </dialog>
+
+      {/* Native <dialog> Merge Pull Request Modal */}
+      <dialog
+        ref={mergeDialogRef}
+        className="sb-dialog"
+        aria-labelledby={mergeTitleId}
+        {...({ closedby: 'any' } as Record<string, string>)}
+      >
+        <div className="dialog-inner">
+          <div className="dialog-header">
+            <h2 id={mergeTitleId}>
+              Merge Pull Request{openPr ? ` #${openPr.number}` : ''}
+            </h2>
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon"
+              aria-label="Close dialog"
+              onClick={() => mergeDialogRef.current?.close()}
+            >
+              <X size={16} />
+            </button>
+          </div>
+          {openPr && (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setBusyAction('merge');
+                setMergeError(null);
+                try {
+                  const res = await onMergePr({
+                    cwd: status.cwd,
+                    prNumber: openPr.number,
+                    mergeMethod,
+                    commitTitle:
+                      mergeMethod === 'rebase' ? undefined : mergeCommitTitle.trim() || undefined,
+                    deleteBranch: mergeDeleteBranch,
+                    syncBaseBranch: mergeSyncBase,
+                    headBranch: openPr.headBranch,
+                    baseBranch: openPr.baseBranch,
+                  });
+                  const extras: string[] = [];
+                  if (res.deletedBranch) extras.push(`deleted ${openPr.headBranch}`);
+                  if (res.switchedToBase) extras.push(`switched to ${res.switchedToBase} & pulled`);
+                  setNotice({
+                    ok: true,
+                    text: `Merged PR #${openPr.number} into ${openPr.baseBranch}${extras.length ? ` (${extras.join(', ')})` : ''}!`,
+                    url: openPr.url,
+                  });
+                  setOpenPr(null);
+                  mergeDialogRef.current?.close();
+                  await onRefresh();
+                } catch (err) {
+                  setMergeError(cleanErrorMessage(err));
+                } finally {
+                  setBusyAction(null);
+                }
+              }}
+              style={{ display: 'contents' }}
+            >
+              <div className="dialog-body scroller">
+                {mergeError && (
+                  <div
+                    style={{
+                      padding: '9px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--danger-soft)',
+                      color: 'var(--danger)',
+                      fontSize: 12.5,
+                    }}
+                  >
+                    {mergeError}
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'var(--bg-elevated)',
+                    border: '1px solid var(--border-subtle)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{openPr.title}</div>
+                  <div className="mono" style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                    {openPr.headBranch} → {openPr.baseBranch}
+                    {typeof openPr.commits === 'number' && ` · ${openPr.commits} commit${openPr.commits === 1 ? '' : 's'}`}
+                    {typeof openPr.changedFiles === 'number' && ` · ${openPr.changedFiles} files`}
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="merge-method">Merge Strategy</label>
+                  <select
+                    id="merge-method"
+                    className="select-compact"
+                    value={mergeMethod}
+                    onChange={(e) => setMergeMethod(e.target.value as MergeMethod)}
+                  >
+                    <option value="squash">Squash and merge (Recommended — 1 clean commit)</option>
+                    <option value="merge">Create a merge commit</option>
+                    <option value="rebase">Rebase and merge</option>
+                  </select>
+                </div>
+
+                {mergeMethod !== 'rebase' && (
+                  <div className="field">
+                    <label htmlFor="merge-commit-title">Commit Title</label>
+                    <input
+                      id="merge-commit-title"
+                      className="input-field"
+                      value={mergeCommitTitle}
+                      onChange={(e) => setMergeCommitTitle(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={mergeDeleteBranch}
+                      onChange={(e) => setMergeDeleteBranch(e.target.checked)}
+                    />
+                    Delete branch <span className="mono">{openPr.headBranch}</span> after merge
+                  </label>
+                  <label
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 7,
+                      fontSize: 12.5,
+                      cursor: status.files.length === 0 ? 'pointer' : 'not-allowed',
+                      opacity: status.files.length === 0 ? 1 : 0.6,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={mergeSyncBase && status.files.length === 0}
+                      disabled={status.files.length > 0}
+                      onChange={(e) => setMergeSyncBase(e.target.checked)}
+                    />
+                    Switch local repo to <span className="mono">{openPr.baseBranch}</span> &amp; pull latest
+                  </label>
+                </div>
+              </div>
+              <div className="dialog-footer">
+                <button type="button" className="btn" onClick={() => mergeDialogRef.current?.close()}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={busyAction === 'merge'}>
+                  {busyAction === 'merge' ? <Loader2 size={13} className="spin" /> : <GitMerge size={13} />}
+                  Confirm Merge
+                </button>
+              </div>
+            </form>
+          )}
         </div>
       </dialog>
     </div>

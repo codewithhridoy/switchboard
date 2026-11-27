@@ -37,7 +37,10 @@ import {
   CreatePrInput,
   CreateTaskInput,
   EffortLevel,
+  GitHubPullRequestInfo,
   GitWorkspaceStatus,
+  MergePrInput,
+  MergePrResult,
   OrchestratedTask,
   SwitchboardState,
   TaskAttachment,
@@ -72,6 +75,8 @@ interface CommandDeckProps {
   onGitCommitAll: (cwd: string, message: string) => Promise<{ commitHash: string }>;
   onGitPush: (cwd: string) => Promise<{ branch: string }>;
   onGitCreatePr: (input: CreatePrInput) => Promise<{ url: string; number: number }>;
+  onGitGetCurrentPr: (cwd: string) => Promise<GitHubPullRequestInfo | null>;
+  onGitMergePr: (input: MergePrInput) => Promise<MergePrResult>;
   onOpenExternal: (url: string) => Promise<void>;
 }
 
@@ -133,6 +138,8 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   onGitCommitAll,
   onGitPush,
   onGitCreatePr,
+  onGitGetCurrentPr,
+  onGitMergePr,
   onOpenExternal,
 }) => {
   const activeProject = state.projects.find((p) => p.id === activeProjectId) ?? null;
@@ -600,6 +607,8 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               onCommitAll={onGitCommitAll}
               onPush={onGitPush}
               onCreatePr={onGitCreatePr}
+              onGetCurrentPr={onGitGetCurrentPr}
+              onMergePr={onGitMergePr}
               onOpenExternal={onOpenExternal}
             />
           ) : (
