@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
 import { buildEnrichedPath, resolveExecutable } from './cliEnv';
-import { spawnCliProcess } from './claudeCli';
+import { spawnNdjsonCliProcess } from './claudeCli';
+import { parseAgyStreamLine } from './streamParsers';
 import { ProviderRunner, RunRequest, RunResult } from './types';
 
 export class AgyCliRunner implements ProviderRunner {
@@ -15,7 +15,13 @@ export class AgyCliRunner implements ProviderRunner {
       };
     }
 
-    const args = ['-p', req.prompt, '--output-format', 'text'];
+    const args = [
+      '-p',
+      req.prompt,
+      '--output-format',
+      'stream-json',
+      '--disable-slash-commands',
+    ];
     if (req.account.model) {
       args.push('--model', req.account.model);
     }
@@ -29,17 +35,18 @@ export class AgyCliRunner implements ProviderRunner {
       NO_COLOR: '1',
     };
 
-    return spawnCliProcess({
+    req.onStatus?.(`Starting Google AI Pro (${req.account.model})...`);
+
+    return spawnNdjsonCliProcess({
       exe,
       args,
       cwd: req.mode === 'coding' && req.workspaceDir ? req.workspaceDir : process.cwd(),
       env,
       signal: req.signal,
       onChunk: req.onChunk,
+      onStatus: req.onStatus,
+      parseLine: parseAgyStreamLine,
       providerLabel: 'Google Antigravity CLI (agy)',
     });
   }
 }
-
-// Keep unused spawn import clean if needed
-void spawn;

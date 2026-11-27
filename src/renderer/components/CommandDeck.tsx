@@ -33,6 +33,7 @@ import {
   OrchestratedTask,
   SwitchboardState,
 } from '../../shared/types';
+import { MarkdownView } from './MarkdownView';
 
 interface CommandDeckProps {
   state: SwitchboardState;
@@ -121,7 +122,18 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
     state.tasks[0]?.id ?? null
   );
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const detailEndRef = useRef<HTMLDivElement | null>(null);
+
+  const hasRunningTask = state.tasks.some(
+    (t) => t.status === 'running' || t.status === 'planning'
+  );
+
+  useEffect(() => {
+    if (!hasRunningTask) return;
+    const id = setInterval(() => setNowTick(Date.now()), 200);
+    return () => clearInterval(id);
+  }, [hasRunningTask]);
 
   useEffect(() => {
     if (activeProject) {
@@ -612,6 +624,8 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               </div>
 
               <div className="task-detail-scroll scroller">
+                <div className="user-prompt-bubble">{selectedTask.prompt}</div>
+
                 {selectedTask.error && (
                   <div
                     style={{
@@ -632,15 +646,27 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
 
                 {selectedTask.subtasks.map((sub) => {
                   const meta = TASK_CATEGORY_META[sub.category];
+                  const isRunning = sub.status === 'running' || sub.status === 'retrying';
+                  const elapsedSec = sub.startedAt
+                    ? (((sub.completedAt ?? nowTick) - sub.startedAt) / 1000).toFixed(1)
+                    : null;
+
                   return (
                     <article key={sub.id} className="subtask-card">
                       <div className="subtask-header">
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                           <StatusIcon status={sub.status} />
                           <strong style={{ fontSize: 13 }}>
-                            Step {sub.index + 1}: {sub.title}
+                            {selectedTask.subtasks.length > 1
+                              ? `Step ${sub.index + 1}: ${sub.title}`
+                              : sub.assignedAccountName || 'Assistant'}
                           </strong>
                           <span className="pill">{meta.shortLabel}</span>
+                          {elapsedSec && (
+                            <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                              {elapsedSec}s
+                            </span>
+                          )}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                           {sub.assignedAccountName && (
@@ -661,10 +687,10 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                         </div>
                       </div>
 
-                      {sub.attempts.length > 0 && (
+                      {sub.attempts.length > 1 && (
                         <div className="attempt-trail">
                           <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                            Execution Trail:
+                            Failover Trail:
                           </span>
                           {sub.attempts.map((att, idx) => (
                             <React.Fragment key={`${sub.id}-${att.attemptNumber}`}>
@@ -693,22 +719,52 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                         </div>
                       )}
 
-                      {sub.routingReason && (
-                        <div
-                          style={{
-                            padding: '6px 14px',
-                            fontSize: 11.5,
-                            color: 'var(--text-secondary)',
-                            borderBottom: '1px solid var(--border-subtle)',
-                          }}
-                        >
-                          Router decision: {sub.routingReason}
+                      {isRunning && sub.output && (
+                        <div className="streaming-status-bar" role="status" aria-live="polite">
+                          <span className="thinking-pill" style={{ fontSize: 11.5 }}>
+                            <span className="thinking-orb" />
+                            <span>{sub.liveStatus || 'Streaming response...'}</span>
+                          </span>
+                          {elapsedSec && <span className="mono">{elapsedSec}s</span>}
                         </div>
                       )}
 
-                      <pre className="terminal-output scroller">
-                        {sub.output || (sub.status === 'pending' ? 'Waiting for previous step...' : 'Starting...')}
-                      </pre>
+                      {isRunning && !sub.output ? (
+                        <div className="live-thinking-box" role="status" aria-live="polite">
+                          <div className="thinking-status-row">
+                            <span className="thinking-pill">
+                              <span className="thinking-orb" />
+                              <span>
+                                {sub.liveStatus ||
+                                  `Thinking with ${sub.assignedAccountName ?? 'model'}...`}
+                              </span>
+                            </span>
+                            {elapsedSec && <span className="mono">{elapsedSec}s</span>}
+                          </div>
+                          <div className="shimmer-lines" aria-hidden="true">
+                            <div className="shimmer-line" style={{ width: '92%' }} />
+                            <div className="shimmer-line" style={{ width: '78%' }} />
+                            <div className="shimmer-line" style={{ width: '61%' }} />
+                          </div>
+                        </div>
+                      ) : sub.output ? (
+                        <div className="assistant-response-body">
+                          <MarkdownView text={sub.output} streaming={isRunning} />
+                        </div>
+                      ) : (
+                        <div
+                          style={{
+                            padding: '14px 16px',
+                            fontSize: 12.5,
+                            color: 'var(--text-secondary)',
+                            background: 'var(--bg-surface)',
+                          }}
+                        >
+                          {sub.status === 'pending'
+                            ? 'Queued — waiting for previous step...'
+                            : sub.error || 'No output.'}
+                        </div>
+                      )}
                     </article>
                   );
                 })}

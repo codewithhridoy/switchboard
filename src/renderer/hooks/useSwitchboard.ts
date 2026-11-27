@@ -104,7 +104,33 @@ export function useSwitchboard() {
                 : {
                     ...t,
                     subtasks: t.subtasks.map((s) =>
-                      s.id !== event.subtaskId ? s : { ...s, output: s.output + event.chunk }
+                      s.id !== event.subtaskId
+                        ? s
+                        : {
+                            ...s,
+                            output: s.output + event.chunk,
+                            liveStatus: 'Streaming response...',
+                          }
+                    ),
+                  }
+            ),
+          };
+        });
+        return;
+      }
+
+      if (event.type === 'subtask-status' && event.taskId && event.subtaskId && event.statusText) {
+        setState((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            tasks: prev.tasks.map((t) =>
+              t.id !== event.taskId
+                ? t
+                : {
+                    ...t,
+                    subtasks: t.subtasks.map((s) =>
+                      s.id !== event.subtaskId ? s : { ...s, liveStatus: event.statusText }
                     ),
                   }
             ),

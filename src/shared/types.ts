@@ -156,6 +156,8 @@ export interface Subtask {
   routingReason?: string;
   attempts: ExecutionAttempt[];
   output: string;
+  liveStatus?: string;
+  systemLog?: string;
   error?: string;
   startedAt?: number;
   completedAt?: number;
@@ -265,12 +267,14 @@ export interface TaskStreamEvent {
   type:
     | 'state-updated'
     | 'subtask-chunk'
+    | 'subtask-status'
     | 'failover-triggered'
     | 'task-completed'
     | 'task-failed';
   taskId?: string;
   subtaskId?: string;
   chunk?: string;
+  statusText?: string;
   stream?: 'stdout' | 'stderr' | 'system';
   fromAccountName?: string;
   toAccountName?: string;

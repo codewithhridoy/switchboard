@@ -817,15 +817,15 @@ export class SwitchboardOrchestrator extends EventEmitter {
       account.lastUsedAt = Date.now();
       account.totalRuns += 1;
 
-      const headerBanner = `\n[Switchboard] Step ${subtask.index + 1}/${task.subtasks.length} → ${account.name} (${effectiveModel}) · ${reason}\n`;
-      subtask.output += headerBanner;
+      const headerBanner = `[Switchboard] Step ${subtask.index + 1}/${task.subtasks.length} → ${account.name} (${effectiveModel}) · ${reason}\n`;
+      subtask.systemLog = (subtask.systemLog ?? '') + headerBanner;
+      subtask.liveStatus = `Connecting to ${account.name} (${effectiveModel})...`;
       this.store.save();
       this.emitEvent({
-        type: 'subtask-chunk',
+        type: 'subtask-status',
         taskId: task.id,
         subtaskId: subtask.id,
-        chunk: headerBanner,
-        stream: 'system',
+        statusText: subtask.liveStatus,
         timestamp: Date.now(),
       });
 
@@ -846,8 +846,23 @@ export class SwitchboardOrchestrator extends EventEmitter {
         mode: task.mode,
         workspaceDir: task.workspaceDir,
         signal: this.activeAbortController.signal,
+        onStatus: (statusText) => {
+          subtask.liveStatus = statusText;
+          this.emitEvent({
+            type: 'subtask-status',
+            taskId: task.id,
+            subtaskId: subtask.id,
+            statusText,
+            timestamp: Date.now(),
+          });
+        },
         onChunk: (chunk, stream) => {
+          if (stream === 'system') {
+            subtask.systemLog = (subtask.systemLog ?? '') + chunk;
+            return;
+          }
           subtask.output += chunk;
+          subtask.liveStatus = 'Streaming response...';
           this.emitEvent({
             type: 'subtask-chunk',
             taskId: task.id,
@@ -862,16 +877,16 @@ export class SwitchboardOrchestrator extends EventEmitter {
       attempt.endedAt = Date.now();
       attempt.outputPreview = truncateTail(result.output, 300);
 
-      // Record usage telemetry for 5h / daily / weekly analytics
+      // Record usage telemetry (prefer exact CLI-reported usage when available)
       this.recordUsage({
         id: `use-${crypto.randomUUID().slice(0, 8)}`,
         timestamp: attempt.endedAt,
         accountId: account.id,
         provider: account.provider,
         model: effectiveModel,
-        inputTokens: estimateTokens(composedPrompt),
-        outputTokens: estimateTokens(result.output),
-        cacheTokens: 0,
+        inputTokens: result.usage?.inputTokens ?? estimateTokens(composedPrompt),
+        outputTokens: result.usage?.outputTokens ?? estimateTokens(result.output),
+        cacheTokens: result.usage?.cacheTokens ?? 0,
         durationMs: Math.max(0, attempt.endedAt - attempt.startedAt),
         status: result.ok ? 'completed' : result.rateLimited ? 'rate-limited' : 'failed',
         source: 'switchboard',
@@ -880,6 +895,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       if (result.cancelled || (task.status as string) === 'cancelled') {
         attempt.status = 'cancelled';
         subtask.status = 'cancelled';
+        subtask.liveStatus = undefined;
         this.store.save();
         this.emitState();
         return false;
@@ -888,6 +904,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       if (result.ok) {
         attempt.status = 'completed';
         subtask.status = 'completed';
+        subtask.liveStatus = undefined;
         subtask.completedAt = Date.now();
         this.store.save();
         this.emitState();

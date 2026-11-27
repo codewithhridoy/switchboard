@@ -7,11 +7,19 @@ export interface RunRequest {
   workspaceDir?: string;
   signal: AbortSignal;
   onChunk: (chunk: string, stream: 'stdout' | 'stderr' | 'system') => void;
+  onStatus?: (statusText: string) => void;
+}
+
+export interface RunUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheTokens?: number;
 }
 
 export interface RunResult {
   ok: boolean;
   output: string;
+  usage?: RunUsage;
   error?: string;
   rateLimited?: boolean;
   rateLimitReason?: string;
