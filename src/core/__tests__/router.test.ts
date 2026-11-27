@@ -18,9 +18,13 @@ describe('detectRateLimit', () => {
     expect(res.retryAfterMs).toBe(30 * 60 * 1000);
   });
 
-  it('ignores normal execution output', () => {
-    const res = detectRateLimit('All 42 unit tests passed cleanly.');
-    expect(res.isRateLimited).toBe(false);
+  it('ignores normal execution output including code mentioning rate_limit_event or line 429', () => {
+    expect(detectRateLimit('All 42 unit tests passed cleanly.').isRateLimited).toBe(false);
+    expect(
+      detectRateLimit(
+        '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}} Added rate limiter middleware at line 429.'
+      ).isRateLimited
+    ).toBe(false);
   });
 });
 

@@ -94,7 +94,6 @@ export function spawnNdjsonCliProcess(opts: {
   providerLabel: string;
 }): Promise<RunResult> {
   return new Promise((resolve) => {
-    let rawStdout = '';
     let stderr = '';
     let streamedText = '';
     let finalText = '';
@@ -157,7 +156,6 @@ export function spawnNdjsonCliProcess(opts: {
 
     child.stdout.on('data', (buf: Buffer) => {
       const text = buf.toString('utf8');
-      rawStdout += text;
       lineBuffer += text;
       const lines = lineBuffer.split(/\r?\n/);
       lineBuffer = lines.pop() ?? '';
@@ -197,13 +195,33 @@ export function spawnNdjsonCliProcess(opts: {
       }
 
       const output = (streamedText || finalText).trim();
-      const diagnosticText = `${errorText}\n${stderr}\n${rawStdout}`;
-      const limitCheck = detectRateLimit(diagnosticText);
 
-      if (code === 0 && !errorText && !limitCheck.isRateLimited) {
-        resolve({ ok: true, output, usage });
+      // IMPORTANT: Never scan rawStdout NDJSON or long assistant prose for rate limits
+      // on a clean exit — Claude stream-json emits informational `rate_limit_event`
+      // objects on every healthy turn, and user code/answers often mention "429" or "rate limit".
+      if (code === 0 && !errorText) {
+        const shortExitLimit =
+          output.length > 0 && output.length < 240 ? detectRateLimit(output) : { isRateLimited: false };
+        if (!shortExitLimit.isRateLimited) {
+          resolve({ ok: true, output, usage });
+          return;
+        }
+        resolve({
+          ok: false,
+          output,
+          usage,
+          rateLimited: true,
+          rateLimitReason: shortExitLimit.reason,
+          retryAfterMs: shortExitLimit.retryAfterMs,
+          error: output,
+        });
         return;
       }
+
+      // Only inspect explicit CLI error text and stderr (or short output when both are empty)
+      const errorSource =
+        errorText || stderr.trim() || (output.length < 500 ? output : '');
+      const limitCheck = detectRateLimit(errorSource);
 
       if (limitCheck.isRateLimited) {
         resolve({
@@ -218,7 +236,7 @@ export function spawnNdjsonCliProcess(opts: {
         return;
       }
 
-      const cleanFallback = (errorText || stderr.trim() || rawStdout.trim()).slice(0, 320);
+      const cleanFallback = (errorText || stderr.trim() || output).slice(0, 320);
       resolve({
         ok: false,
         output,
@@ -302,30 +320,48 @@ export function spawnCliProcess(opts: {
       if (settled) return;
       settled = true;
 
-      const combined = `${stderr}\n${stdout}`;
-      const limitCheck = detectRateLimit(combined);
+      const trimmedOut = stdout.trim();
+      const trimmedErr = stderr.trim();
 
-      if (code === 0 && !limitCheck.isRateLimited) {
-        resolve({ ok: true, output: stdout.trim() });
-        return;
-      }
-
-      if (limitCheck.isRateLimited) {
+      if (code === 0) {
+        const shortLimit =
+          trimmedOut.length > 0 && trimmedOut.length < 240
+            ? detectRateLimit(trimmedOut)
+            : { isRateLimited: false };
+        if (!shortLimit.isRateLimited) {
+          resolve({ ok: true, output: trimmedOut });
+          return;
+        }
         resolve({
           ok: false,
-          output: stdout.trim(),
+          output: trimmedOut,
           rateLimited: true,
-          rateLimitReason: limitCheck.reason,
-          retryAfterMs: limitCheck.retryAfterMs,
-          error: stderr.trim() || limitCheck.reason || 'Rate limit reached',
+          rateLimitReason: shortLimit.reason,
+          retryAfterMs: shortLimit.retryAfterMs,
+          error: trimmedOut,
         });
         return;
       }
 
-      const errorDetail = (stderr.trim() || stdout.trim()).slice(0, 320);
+      const errorSource = trimmedErr || (trimmedOut.length < 500 ? trimmedOut : '');
+      const limitCheck = detectRateLimit(errorSource);
+
+      if (limitCheck.isRateLimited) {
+        resolve({
+          ok: false,
+          output: trimmedOut,
+          rateLimited: true,
+          rateLimitReason: limitCheck.reason,
+          retryAfterMs: limitCheck.retryAfterMs,
+          error: trimmedErr || limitCheck.reason || 'Rate limit reached',
+        });
+        return;
+      }
+
+      const errorDetail = (trimmedErr || trimmedOut).slice(0, 320);
       resolve({
         ok: false,
-        output: stdout.trim(),
+        output: trimmedOut,
         error:
           errorDetail ||
           `${opts.providerLabel} exited with code ${code ?? 'unknown'}`,

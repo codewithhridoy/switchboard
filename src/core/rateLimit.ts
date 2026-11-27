@@ -5,20 +5,43 @@ export interface RateLimitDetection {
 }
 
 const RATE_LIMIT_PATTERNS: Array<{ regex: RegExp; reason: string }> = [
-  { regex: /\b429\b|too many requests/i, reason: 'HTTP 429 Too Many Requests' },
-  { regex: /rate[_\s-]?limit(ed|ing)?(\s+exceeded|\s+reached)?/i, reason: 'Provider rate limit reached' },
-  { regex: /usage\s+limit(\s+reached|\s+exceeded)?/i, reason: 'Subscription usage limit reached' },
-  { regex: /quota\s+(exceeded|exhausted|limit)/i, reason: 'Account quota exhausted' },
-  { regex: /resource[_\s-]?exhausted/i, reason: 'Google RESOURCE_EXHAUSTED quota error' },
-  { regex: /limit\s+will\s+reset|resets?\s+(at|in)\s+/i, reason: 'Session usage window exhausted' },
-  { regex: /overloaded_error|capacity\s+reached|temporarily\s+overloaded/i, reason: 'Model temporarily overloaded' },
-  { regex: /credit\s+balance\s+is\s+too\s+low|insufficient_quota/i, reason: 'Account credits or quota depleted' },
-  { regex: /you['’]?ve\s+hit\s+your\s+(limit|cap)|message\s+limit\s+reached/i, reason: 'Message limit reached' },
+  {
+    regex: /\b(?:http|status|error|code)\s*[:=]?\s*429\b|too many requests/i,
+    reason: 'HTTP 429 Too Many Requests',
+  },
+  {
+    regex: /rate\s*limit(?:ed)?\s+(?:exceeded|reached|hit|error)|rate_limit_error/i,
+    reason: 'Provider rate limit reached',
+  },
+  {
+    regex: /usage\s+limit\s+(?:reached|exceeded|hit)/i,
+    reason: 'Subscription usage limit reached',
+  },
+  {
+    regex: /quota\s+(?:exceeded|exhausted|depleted)|insufficient_quota/i,
+    reason: 'Account quota exhausted',
+  },
+  {
+    regex: /resource[_\s-]?exhausted/i,
+    reason: 'Google RESOURCE_EXHAUSTED quota error',
+  },
+  {
+    regex: /you['’]?ve\s+hit\s+your\s+(?:usage\s+|message\s+|session\s+)?(?:limit|cap)|message\s+limit\s+reached|limit\s+will\s+reset/i,
+    reason: 'Session usage window exhausted',
+  },
+  {
+    regex: /overloaded_error|temporarily\s+overloaded|capacity\s+exhausted/i,
+    reason: 'Model temporarily overloaded',
+  },
+  {
+    regex: /credit\s+balance\s+is\s+too\s+low/i,
+    reason: 'Account credits depleted',
+  },
 ];
 
 /**
- * Inspects provider output / error text and optional HTTP status code to detect
- * rate-limit or subscription quota exhaustion, extracting a reset delay when possible.
+ * Inspects provider error text (NEVER successful assistant prose or raw JSON telemetry)
+ * and optional HTTP status code to detect real rate-limit or quota exhaustion.
  */
 export function detectRateLimit(
   text: string,
@@ -63,7 +86,6 @@ function parseRetryAfterHeader(header?: string | null): number | undefined {
 }
 
 function parseDurationFromText(text: string): number | undefined {
-  // e.g. "try again in 15 minutes", "resets in 2 hours", "retry after 45 seconds"
   const relative = text.match(
     /(?:try again|retry|reset(?:s)?)\s+(?:in|after)\s+(\d+)\s*(s|sec|second|seconds|m|min|minute|minutes|h|hr|hour|hours)\b/i
   );
@@ -77,7 +99,6 @@ function parseDurationFromText(text: string): number | undefined {
     }
   }
 
-  // e.g. "resets at 4pm" or "resets at 14:30"
   const clock = text.match(/resets?\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i);
   if (clock) {
     let hour = Number(clock[1]);
