@@ -5,10 +5,12 @@ import {
   CliHealthInfo,
   CloneRepoInput,
   CreateAccountInput,
+  CreatePrInput,
   CreateProjectInput,
   CreateTaskInput,
   GitHubRepoSummary,
   GitHubSyncConfig,
+  GitWorkspaceStatus,
   ImportProjectInput,
   OrchestratedTask,
   ProjectWorkspace,
@@ -58,6 +60,14 @@ export interface SwitchboardApi {
     restoredProjects: number;
     restoredTasks: number;
   }>;
+  // Git Workspace (Changes, Branches, Commit, Push, PR)
+  gitStatus: (cwd: string) => Promise<GitWorkspaceStatus>;
+  gitFileDiff: (cwd: string, filePath: string) => Promise<string>;
+  gitCheckout: (cwd: string, branchName: string, createNew?: boolean) => Promise<void>;
+  gitDiscardFile: (cwd: string, filePath: string) => Promise<void>;
+  gitCommitAll: (cwd: string, message: string) => Promise<{ commitHash: string }>;
+  gitPush: (cwd: string) => Promise<{ branch: string }>;
+  gitCreatePr: (input: CreatePrInput) => Promise<{ url: string; number: number }>;
   // Tasks
   enqueueTask: (input: CreateTaskInput) => Promise<OrchestratedTask>;
   retryTask: (taskId: string) => Promise<OrchestratedTask | null>;

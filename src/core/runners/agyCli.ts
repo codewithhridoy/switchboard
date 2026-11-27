@@ -39,6 +39,17 @@ export class AgyCliRunner implements ProviderRunner {
       args.push('--model', effectiveModel);
     }
 
+    if (req.mode === 'coding') {
+      const perm = req.permissionMode ?? 'accept-edits';
+      if (perm === 'full-auto') {
+        args.push('--dangerously-skip-permissions');
+      } else if (perm === 'read-only') {
+        args.push('--mode', 'plan');
+      } else {
+        args.push('--mode', 'accept-edits');
+      }
+    }
+
     if (req.attachments && req.attachments.length > 0) {
       const dirs = Array.from(new Set(req.attachments.map((a) => path.dirname(a.path))));
       for (const d of dirs) {

@@ -3,6 +3,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  checkoutBranch,
+  createGitHubPullRequest,
+  discardFileChanges,
+  getFileDiff,
+  getGitWorkspaceStatus,
+  pushCurrentBranch,
+  stageAndCommitAll,
+} from '../core/gitWorkspace';
 import { SwitchboardOrchestrator } from '../core/orchestrator';
 import { getRunnerForProvider } from '../core/runners/index';
 import {
@@ -10,6 +19,7 @@ import {
   AppSettings,
   CloneRepoInput,
   CreateAccountInput,
+  CreatePrInput,
   CreateProjectInput,
   CreateTaskInput,
   GitHubSyncConfig,
@@ -214,6 +224,34 @@ function registerIpcHandlers(): void {
   ipcMain.handle('switchboard:pull-sync-now', (_e, passphrase?: string) =>
     orchestrator.pullSyncNow(passphrase)
   );
+
+  // Git Workspace (Diff, Branches, Commit, Push, Pull Request)
+  ipcMain.handle('switchboard:git-status', (_e, cwd: string) => getGitWorkspaceStatus(cwd));
+  ipcMain.handle('switchboard:git-diff', (_e, cwd: string, filePath: string) =>
+    getFileDiff(cwd, filePath)
+  );
+  ipcMain.handle(
+    'switchboard:git-checkout',
+    (_e, cwd: string, branchName: string, createNew?: boolean) =>
+      checkoutBranch(cwd, branchName, createNew)
+  );
+  ipcMain.handle('switchboard:git-discard', (_e, cwd: string, filePath: string) =>
+    discardFileChanges(cwd, filePath)
+  );
+  ipcMain.handle('switchboard:git-commit', (_e, cwd: string, message: string) =>
+    stageAndCommitAll(cwd, message)
+  );
+  ipcMain.handle('switchboard:git-push', async (_e, cwd: string) => {
+    const token = await orchestrator.resolveOptionalGitHubToken();
+    return pushCurrentBranch(cwd, token);
+  });
+  ipcMain.handle('switchboard:git-create-pr', async (_e, input: CreatePrInput) => {
+    const token = await orchestrator.resolveOptionalGitHubToken();
+    if (!token) {
+      throw new Error('Connect your GitHub account in GitHub Sync (or sign into `gh`) to create Pull Requests.');
+    }
+    return createGitHubPullRequest(input, token);
+  });
 
   ipcMain.handle('switchboard:enqueue-task', (_e, input: CreateTaskInput) =>
     orchestrator.enqueueTask(input)

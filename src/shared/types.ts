@@ -11,6 +11,38 @@ export type AccountScope = 'personal' | 'team' | 'any';
 
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
+export type CodingPermissionMode = 'accept-edits' | 'full-auto' | 'read-only';
+
+export interface GitChangedFile {
+  path: string;
+  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked';
+  staged: boolean;
+  additions: number;
+  deletions: number;
+}
+
+export interface GitWorkspaceStatus {
+  isGitRepo: boolean;
+  cwd: string;
+  currentBranch: string;
+  branches: string[];
+  remoteUrl?: string;
+  githubFullName?: string;
+  ahead: number;
+  behind: number;
+  files: GitChangedFile[];
+  totalAdditions: number;
+  totalDeletions: number;
+}
+
+export interface CreatePrInput {
+  cwd: string;
+  title: string;
+  body: string;
+  baseBranch: string;
+  draft?: boolean;
+}
+
 export type TaskCategory =
   | 'architecture'
   | 'coding'
@@ -219,6 +251,7 @@ export interface OrchestratedTask {
   prompt: string;
   attachments?: TaskAttachment[];
   mode: 'coding' | 'general';
+  permissionMode?: CodingPermissionMode;
   fastMode?: boolean;
   workspaceDir?: string;
   workspaceScope: AccountScope;
@@ -302,6 +335,7 @@ export interface CreateTaskInput {
   projectId?: string | null;
   threadId?: string | null;
   mode: 'coding' | 'general';
+  permissionMode?: CodingPermissionMode;
   fastMode?: boolean;
   workspaceDir?: string;
   workspaceScope?: AccountScope;

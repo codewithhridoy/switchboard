@@ -140,6 +140,14 @@ export const App: React.FC = () => {
               onPickFolder={actions.pickFolder}
               onPickFiles={actions.pickFiles}
               onSaveAttachment={actions.saveAttachment}
+              onGitStatus={actions.gitStatus}
+              onGitFileDiff={actions.gitFileDiff}
+              onGitCheckout={actions.gitCheckout}
+              onGitDiscardFile={actions.gitDiscardFile}
+              onGitCommitAll={actions.gitCommitAll}
+              onGitPush={actions.gitPush}
+              onGitCreatePr={actions.gitCreatePr}
+              onOpenExternal={actions.openExternal}
             />
           )}
           {activeTab === 'projects' && (

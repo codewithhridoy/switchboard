@@ -311,6 +311,18 @@ export class SwitchboardOrchestrator extends EventEmitter {
     return project;
   }
 
+  public async resolveOptionalGitHubToken(): Promise<string | undefined> {
+    const data = this.store.getData();
+    try {
+      if (data.sync.connected && data.sync.authMode) {
+        return await resolveGitHubToken(data.sync.authMode, data.sync.patToken);
+      }
+      return await resolveGitHubToken('gh-cli');
+    } catch {
+      return undefined;
+    }
+  }
+
   public async listGitHubRepos(): Promise<GitHubRepoSummary[]> {
     const data = this.store.getData();
     const authMode = data.sync.authMode ?? 'gh-cli';
@@ -583,6 +595,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       prompt: input.prompt.trim(),
       attachments: input.attachments?.length ? input.attachments : undefined,
       mode: input.mode,
+      permissionMode: input.permissionMode ?? (input.mode === 'coding' ? 'accept-edits' : undefined),
       fastMode: input.fastMode ?? false,
       workspaceDir:
         input.mode === 'coding'
@@ -854,6 +867,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
         prompt: composedPrompt,
         attachments: task.attachments,
         mode: task.mode,
+        permissionMode: task.permissionMode,
         fastMode: autoFast,
         workspaceDir: task.workspaceDir,
         signal: this.activeAbortController.signal,

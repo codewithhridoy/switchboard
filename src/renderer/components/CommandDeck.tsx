@@ -5,10 +5,13 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  FileDiff,
   FileText,
   FolderGit2,
   FolderOpen,
+  GitBranch,
   Loader2,
+  MessageSquare,
   MessageSquarePlus,
   Paperclip,
   Play,
@@ -32,12 +35,16 @@ import { PROVIDER_MODELS, TASK_CATEGORY_META } from '../../shared/presets';
 import {
   AccountScope,
   ChatThread,
+  CodingPermissionMode,
+  CreatePrInput,
   CreateTaskInput,
   EffortLevel,
+  GitWorkspaceStatus,
   OrchestratedTask,
   SwitchboardState,
   TaskAttachment,
 } from '../../shared/types';
+import { GitChangesPanel } from './GitChangesPanel';
 import { MarkdownView } from './MarkdownView';
 
 interface CommandDeckProps {
@@ -56,6 +63,14 @@ interface CommandDeckProps {
     mimeType: string;
     base64Data: string;
   }) => Promise<TaskAttachment | null>;
+  onGitStatus: (cwd: string) => Promise<GitWorkspaceStatus>;
+  onGitFileDiff: (cwd: string, filePath: string) => Promise<string>;
+  onGitCheckout: (cwd: string, branch: string, createNew?: boolean) => Promise<void>;
+  onGitDiscardFile: (cwd: string, filePath: string) => Promise<void>;
+  onGitCommitAll: (cwd: string, message: string) => Promise<{ commitHash: string }>;
+  onGitPush: (cwd: string) => Promise<{ branch: string }>;
+  onGitCreatePr: (input: CreatePrInput) => Promise<{ url: string; number: number }>;
+  onOpenExternal: (url: string) => Promise<void>;
 }
 
 const EXAMPLE_PROMPTS = [
@@ -108,6 +123,14 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   onPickFolder,
   onPickFiles,
   onSaveAttachment,
+  onGitStatus,
+  onGitFileDiff,
+  onGitCheckout,
+  onGitDiscardFile,
+  onGitCommitAll,
+  onGitPush,
+  onGitCreatePr,
+  onOpenExternal,
 }) => {
   const activeProject = state.projects.find((p) => p.id === activeProjectId) ?? null;
   const projectThreads = useMemo(
@@ -119,10 +142,14 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   );
 
   const [activeThreadId, setActiveThreadId] = useState<string>('');
+  const [inspectorTab, setInspectorTab] = useState<'response' | 'changes'>('response');
+  const [gitStatus, setGitStatus] = useState<GitWorkspaceStatus | null>(null);
+  const [loadingGit, setLoadingGit] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [mode, setMode] = useState<'coding' | 'general'>('coding');
+  const [permissionMode, setPermissionMode] = useState<CodingPermissionMode>('accept-edits');
   const [fastMode, setFastMode] = useState(false);
   const [workspaceDir, setWorkspaceDir] = useState(
     activeProject?.path || state.settings.defaultWorkspaceDir || ''
@@ -150,6 +177,27 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
     const id = setInterval(() => setNowTick(Date.now()), 200);
     return () => clearInterval(id);
   }, [hasRunningTask]);
+
+  const effectiveGitDir =
+    (mode === 'coding' ? workspaceDir : '') || activeProject?.path || '';
+
+  const refreshGit = async () => {
+    if (!effectiveGitDir) {
+      setGitStatus(null);
+      return;
+    }
+    setLoadingGit(true);
+    try {
+      const next = await onGitStatus(effectiveGitDir);
+      setGitStatus(next);
+    } finally {
+      setLoadingGit(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshGit();
+  }, [effectiveGitDir, state.tasks.length, hasRunningTask]);
 
   useEffect(() => {
     if (activeProject) {
@@ -266,6 +314,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
       projectId: activeProjectId,
       threadId: targetThreadId,
       mode,
+      permissionMode: mode === 'coding' ? permissionMode : undefined,
       fastMode,
       workspaceDir: mode === 'coding' ? workspaceDir : undefined,
       workspaceScope,
@@ -445,28 +494,42 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
             </div>
 
             {mode === 'coding' && (
-              <button
-                type="button"
-                className="btn btn-sm"
-                title={workspaceDir || 'Select workspace folder'}
-                onClick={async () => {
-                  const picked = await onPickFolder();
-                  if (picked) setWorkspaceDir(picked);
-                }}
-              >
-                <FolderOpen size={13} />
-                <span
-                  className="mono"
-                  style={{
-                    maxWidth: 190,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
+              <>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  title={workspaceDir || 'Select workspace folder'}
+                  onClick={async () => {
+                    const picked = await onPickFolder();
+                    if (picked) setWorkspaceDir(picked);
                   }}
                 >
-                  {workspaceDir ? workspaceDir.split(/[\\/]/).slice(-2).join('/') : 'Choose Folder'}
-                </span>
-              </button>
+                  <FolderOpen size={13} />
+                  <span
+                    className="mono"
+                    style={{
+                      maxWidth: 165,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {workspaceDir ? workspaceDir.split(/[\\/]/).slice(-2).join('/') : 'Choose Folder'}
+                  </span>
+                </button>
+
+                <select
+                  className="select-compact"
+                  aria-label="Coding agent permissions"
+                  value={permissionMode}
+                  onChange={(e) => setPermissionMode(e.target.value as CodingPermissionMode)}
+                  title="Controls whether headless coding agents can edit files and run commands"
+                >
+                  <option value="accept-edits">Edits: Auto-Approve</option>
+                  <option value="full-auto">Full Auto (Edits + Shell)</option>
+                  <option value="read-only">Plan / Read-Only</option>
+                </select>
+              </>
             )}
 
             <select
@@ -683,9 +746,103 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
           )}
         </section>
 
-        {/* Right: Execution Inspector */}
+        {/* Right: Execution Inspector & Git Changes */}
         <section className="card task-detail-panel" aria-label="Execution inspector">
-          {!selectedTask ? (
+          <div className="panel-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+              <div className="segmented" role="tablist" aria-label="Workspace inspector view">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === 'response'}
+                  className={inspectorTab === 'response' ? 'active' : ''}
+                  onClick={() => setInspectorTab('response')}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                    <MessageSquare size={12} />
+                    Response
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={inspectorTab === 'changes'}
+                  className={inspectorTab === 'changes' ? 'active' : ''}
+                  onClick={() => {
+                    setInspectorTab('changes');
+                    void refreshGit();
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                    <FileDiff size={12} />
+                    Changes
+                    {gitStatus?.isGitRepo && gitStatus.files.length > 0 && (
+                      <span className="pill pill-accent" style={{ padding: '0 6px', fontSize: 10.5 }}>
+                        {gitStatus.files.length}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              </div>
+
+              {gitStatus?.isGitRepo && (
+                <span className="pill mono" title={`Current branch in ${gitStatus.cwd}`}>
+                  <GitBranch size={11} />
+                  {gitStatus.currentBranch}
+                </span>
+              )}
+            </div>
+
+            {inspectorTab === 'response' && selectedTask && (
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                {(selectedTask.status === 'running' || selectedTask.status === 'queued') && (
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={() => void onCancelTask(selectedTask.id)}
+                  >
+                    <Square size={12} />
+                    Stop
+                  </button>
+                )}
+                {(selectedTask.status === 'failed' || selectedTask.status === 'cancelled') && (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => void onRetryTask(selectedTask.id)}
+                  >
+                    <RefreshCw size={12} />
+                    Retry
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  title="Delete task"
+                  aria-label="Delete task"
+                  onClick={() => void onDeleteTask(selectedTask.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {inspectorTab === 'changes' ? (
+            <GitChangesPanel
+              status={gitStatus}
+              loading={loadingGit}
+              defaultCommitMessage={selectedTask?.title}
+              onRefresh={refreshGit}
+              onGetFileDiff={onGitFileDiff}
+              onCheckout={onGitCheckout}
+              onDiscardFile={onGitDiscardFile}
+              onCommitAll={onGitCommitAll}
+              onPush={onGitPush}
+              onCreatePr={onGitCreatePr}
+              onOpenExternal={onOpenExternal}
+            />
+          ) : !selectedTask ? (
             <div className="empty-state">
               <Shield size={26} style={{ opacity: 0.45 }} />
               <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
@@ -697,25 +854,36 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
             </div>
           ) : (
             <>
-              <div className="panel-header">
+              <div
+                style={{
+                  padding: '10px 16px',
+                  borderBottom: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                  flexShrink: 0,
+                }}
+              >
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <StatusIcon status={selectedTask.status} />
-                    <h2
+                    <strong
                       style={{
+                        fontSize: 13.5,
                         whiteSpace: 'nowrap',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                       }}
                     >
                       {selectedTask.title}
-                    </h2>
+                    </strong>
                   </div>
                   <div
                     style={{
                       fontSize: 11.5,
                       color: 'var(--text-secondary)',
-                      marginTop: 3,
+                      marginTop: 2,
                       display: 'flex',
                       flexWrap: 'wrap',
                       gap: 8,
@@ -731,38 +899,6 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                       </>
                     )}
                   </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                  {(selectedTask.status === 'running' || selectedTask.status === 'queued') && (
-                    <button
-                      type="button"
-                      className="btn btn-danger btn-sm"
-                      onClick={() => void onCancelTask(selectedTask.id)}
-                    >
-                      <Square size={12} />
-                      Stop
-                    </button>
-                  )}
-                  {(selectedTask.status === 'failed' || selectedTask.status === 'cancelled') && (
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-sm"
-                      onClick={() => void onRetryTask(selectedTask.id)}
-                    >
-                      <RefreshCw size={12} />
-                      Retry
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-icon"
-                    title="Delete task"
-                    aria-label="Delete task"
-                    onClick={() => void onDeleteTask(selectedTask.id)}
-                  >
-                    <Trash2 size={14} />
-                  </button>
                 </div>
               </div>
 

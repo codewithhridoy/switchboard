@@ -1,10 +1,11 @@
-import { AccountProfile, TaskAttachment } from '../../shared/types';
+import { AccountProfile, CodingPermissionMode, TaskAttachment } from '../../shared/types';
 
 export interface RunRequest {
   account: AccountProfile;
   prompt: string;
   attachments?: TaskAttachment[];
   mode: 'coding' | 'general';
+  permissionMode?: CodingPermissionMode;
   fastMode?: boolean;
   workspaceDir?: string;
   signal: AbortSignal;

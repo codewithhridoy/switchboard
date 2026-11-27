@@ -9,6 +9,7 @@ import {
   AppSettings,
   CloneRepoInput,
   CreateAccountInput,
+  CreatePrInput,
   CreateProjectInput,
   CreateTaskInput,
   GitHubSyncConfig,
@@ -303,6 +304,49 @@ export function useSwitchboard() {
       const res = await window.switchboard.pullSyncNow(passphrase);
       await reload();
       return res;
+    },
+    // Git Workspace
+    gitStatus: async (cwd: string) => {
+      if (!window.switchboard) {
+        return {
+          isGitRepo: false,
+          cwd,
+          currentBranch: '',
+          branches: [],
+          ahead: 0,
+          behind: 0,
+          files: [],
+          totalAdditions: 0,
+          totalDeletions: 0,
+        };
+      }
+      return window.switchboard.gitStatus(cwd);
+    },
+    gitFileDiff: async (cwd: string, filePath: string) => {
+      if (!window.switchboard) return '';
+      return window.switchboard.gitFileDiff(cwd, filePath);
+    },
+    gitCheckout: async (cwd: string, branchName: string, createNew?: boolean) => {
+      if (window.switchboard) {
+        await window.switchboard.gitCheckout(cwd, branchName, createNew);
+      }
+    },
+    gitDiscardFile: async (cwd: string, filePath: string) => {
+      if (window.switchboard) {
+        await window.switchboard.gitDiscardFile(cwd, filePath);
+      }
+    },
+    gitCommitAll: async (cwd: string, message: string) => {
+      if (!window.switchboard) throw new Error('Desktop app required.');
+      return window.switchboard.gitCommitAll(cwd, message);
+    },
+    gitPush: async (cwd: string) => {
+      if (!window.switchboard) throw new Error('Desktop app required.');
+      return window.switchboard.gitPush(cwd);
+    },
+    gitCreatePr: async (input: CreatePrInput) => {
+      if (!window.switchboard) throw new Error('Desktop app required.');
+      return window.switchboard.gitCreatePr(input);
     },
     // Tasks
     enqueueTask: async (input: CreateTaskInput) => {

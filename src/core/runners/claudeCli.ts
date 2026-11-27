@@ -35,6 +35,18 @@ export class ClaudeCliRunner implements ProviderRunner {
       args.push('--effort', effectiveEffort);
     }
 
+    // Apply explicit coding permission mode so headless `-p` edits aren't silently rejected
+    if (req.mode === 'coding') {
+      const perm = req.permissionMode ?? 'accept-edits';
+      if (perm === 'full-auto') {
+        args.push('--permission-mode', 'bypassPermissions');
+      } else if (perm === 'read-only') {
+        args.push('--permission-mode', 'plan');
+      } else {
+        args.push('--permission-mode', 'acceptEdits');
+      }
+    }
+
     // Fast-path flags: skip slow MCP server cold boot & skill scans on General/Fast chats
     if (req.fastMode || req.mode === 'general') {
       args.push('--strict-mcp-config', '--disable-slash-commands');
