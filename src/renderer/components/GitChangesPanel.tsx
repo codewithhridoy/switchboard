@@ -76,7 +76,12 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
 
   const [commitMsg, setCommitMsg] = useState(defaultCommitMessage || '');
   const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ ok: boolean; text: string; url?: string } | null>(null);
+  const [notice, setNotice] = useState<{
+    ok: boolean;
+    text: string;
+    url?: string;
+    urlLabel?: string;
+  } | null>(null);
 
   // Create PR Modal state
   const prDialogRef = useRef<HTMLDialogElement | null>(null);
@@ -470,7 +475,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
               className="btn btn-sm"
               onClick={() => void onOpenExternal(openPr.url)}
             >
-              Open PR <ExternalLink size={11} />
+              View on GitHub <ExternalLink size={11} />
             </button>
             <button
               type="button"
@@ -549,15 +554,26 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
           }}
         >
           <span>{notice.text}</span>
-          {notice.url && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {notice.url && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => void onOpenExternal(notice.url!)}
+              >
+                {notice.urlLabel || 'View on GitHub'} <ExternalLink size={11} />
+              </button>
+            )}
             <button
               type="button"
-              className="btn btn-sm"
-              onClick={() => void onOpenExternal(notice.url!)}
+              className="btn btn-ghost btn-icon"
+              style={{ width: 22, height: 22, padding: 2 }}
+              aria-label="Dismiss notification"
+              onClick={() => setNotice(null)}
             >
-              Open PR <ExternalLink size={11} />
+              <X size={12} />
             </button>
-          )}
+          </div>
         </div>
       )}
 
@@ -699,6 +715,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
                   ok: true,
                   text: `Opened Pull Request #${res.number}!`,
                   url: res.url,
+                  urlLabel: 'View on GitHub',
                 });
                 prDialogRef.current?.close();
                 await onRefresh();
@@ -895,6 +912,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({
                     ok: true,
                     text: `Merged PR #${openPr.number} into ${openPr.baseBranch}${extras.length ? ` (${extras.join(', ')})` : ''}!`,
                     url: openPr.url,
+                    urlLabel: 'View on GitHub',
                   });
                   setOpenPr(null);
                   mergeDialogRef.current?.close();
