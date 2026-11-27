@@ -80,8 +80,22 @@ export class SwitchboardOrchestrator extends EventEmitter {
         task.error = 'Interrupted when Switchboard closed. Click Retry to resume.';
         recovered = true;
       }
+      // Ensure every legacy task belongs to a continuable ChatThread
+      if (!task.threadId) {
+        const newThreadId = `thr-${crypto.randomUUID().slice(0, 8)}`;
+        task.threadId = newThreadId;
+        data.threads.push({
+          id: newThreadId,
+          projectId: task.projectId ?? null,
+          title: task.title || deriveTitle(task.prompt),
+          createdAt: task.createdAt,
+          updatedAt: task.completedAt ?? task.createdAt,
+        });
+        recovered = true;
+      }
     }
     if (recovered) {
+      data.threads.sort((a, b) => b.updatedAt - a.updatedAt);
       this.store.save();
     }
   }
@@ -566,14 +580,34 @@ export class SwitchboardOrchestrator extends EventEmitter {
     if (threadId) {
       const thread = data.threads.find((t) => t.id === threadId);
       if (thread) {
-        if (thread.title === 'New Chat Thread' || thread.title === 'Main Thread') {
+        if (thread.title === 'New Chat Thread' || thread.title === 'Main Thread' || thread.title === 'New Chat') {
           const priorCount = data.tasks.filter((t) => t.threadId === thread.id).length;
           if (priorCount === 0) {
             thread.title = deriveTitle(input.prompt);
           }
         }
         thread.updatedAt = Date.now();
+      } else {
+        // Recreate missing thread ID cleanly
+        data.threads.unshift({
+          id: threadId,
+          projectId: project?.id ?? input.projectId ?? null,
+          title: deriveTitle(input.prompt),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
       }
+    } else {
+      // Auto-create a continuable thread for every brand new chat
+      const now = Date.now();
+      threadId = `thr-${crypto.randomUUID().slice(0, 8)}`;
+      data.threads.unshift({
+        id: threadId,
+        projectId: project?.id ?? input.projectId ?? null,
+        title: input.title?.trim() || deriveTitle(input.prompt),
+        createdAt: now,
+        updatedAt: now,
+      });
     }
 
     const subtasks: Subtask[] = planned.map((p, idx) => ({
@@ -1059,24 +1093,27 @@ export class SwitchboardOrchestrator extends EventEmitter {
           (t) =>
             t.threadId === task.threadId &&
             t.id !== task.id &&
-            t.status === 'completed' &&
+            (t.status === 'completed' || t.subtasks.some((s) => s.output.trim().length > 0)) &&
             t.createdAt < task.createdAt
         )
         .sort((a, b) => a.createdAt - b.createdAt)
-        .slice(-4);
+        .slice(-6);
 
       if (priorTurns.length > 0) {
         const transcript = priorTurns
           .map((turn, idx) => {
             const reply =
+              turn.subtasks
+                .map((s) => s.output.trim())
+                .filter(Boolean)
+                .join('\n') ||
               turn.summary ||
-              turn.subtasks.map((s) => s.output).join('\n') ||
               '(completed)';
-            return `Turn ${idx + 1} — User:\n${turn.prompt}\n\nTurn ${idx + 1} — Assistant:\n${truncateTail(reply, 900)}`;
+            return `Turn ${idx + 1} — User:\n${turn.prompt}\n\nTurn ${idx + 1} — Assistant:\n${truncateTail(reply, 1400)}`;
           })
           .join('\n\n---\n\n');
         sections.push(
-          `Previous conversation history in this thread:\n${truncateTail(transcript, maxChars)}`
+          `Previous conversation history in this thread (continue naturally from here):\n${truncateTail(transcript, Math.max(maxChars, 6000))}`
         );
       }
     }

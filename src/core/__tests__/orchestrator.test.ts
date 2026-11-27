@@ -100,4 +100,61 @@ describe('SwitchboardOrchestrator failover flow', () => {
     // Failover handoff prompt should include context from Claude Team
     expect(callLog[1].accountId).toBe('acc-claude-personal');
   });
+
+  it('auto-creates a thread and carries Turn 1 history into a follow-up Turn 2 reply', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'switchboard-thread-'));
+    tempDirs.push(tmp);
+
+    const store = new SwitchboardStore(tmp);
+    const seenPrompts: string[] = [];
+
+    const mockRunner: ProviderRunner = {
+      async run(req: RunRequest): Promise<RunResult> {
+        seenPrompts.push(req.prompt);
+        const out = `Reply #${seenPrompts.length} from ${req.account.name}`;
+        req.onChunk(out, 'stdout');
+        return { ok: true, output: out };
+      },
+    };
+
+    const orchestrator = new SwitchboardOrchestrator({
+      store,
+      runnerFactory: () => mockRunner,
+    });
+
+    const waitDone = (taskId: string) =>
+      new Promise<void>((resolve) => {
+        const check = () => {
+          const cur = orchestrator.getState().tasks.find((t) => t.id === taskId);
+          if (cur && (cur.status === 'completed' || cur.status === 'failed')) {
+            resolve();
+          } else {
+            setTimeout(check, 15);
+          }
+        };
+        check();
+      });
+
+    // Turn 1 (no threadId provided -> auto-creates a thread!)
+    const turn1 = orchestrator.enqueueTask({
+      mode: 'general',
+      prompt: 'Remember the secret codename PINEAPPLE.',
+      autoDecompose: false,
+    });
+    expect(turn1.threadId).toBeTruthy();
+    await waitDone(turn1.id);
+
+    // Turn 2 reply in the exact same thread
+    const turn2 = orchestrator.enqueueTask({
+      mode: 'general',
+      threadId: turn1.threadId,
+      prompt: 'What codename did I ask you to remember?',
+      autoDecompose: false,
+    });
+    await waitDone(turn2.id);
+
+    expect(seenPrompts).toHaveLength(2);
+    expect(seenPrompts[1]).toContain('PINEAPPLE');
+    expect(seenPrompts[1]).toContain('Reply #1');
+  });
 });

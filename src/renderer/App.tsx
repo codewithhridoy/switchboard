@@ -133,6 +133,7 @@ export const App: React.FC = () => {
               activeProjectId={activeProjectId}
               onSelectProject={setActiveProjectId}
               onCreateThread={actions.createThread}
+              onDeleteThread={actions.deleteThread}
               onEnqueueTask={actions.enqueueTask}
               onRetryTask={actions.retryTask}
               onCancelTask={actions.cancelTask}

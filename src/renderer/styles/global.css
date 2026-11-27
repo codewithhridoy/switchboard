@@ -1539,6 +1539,46 @@ h4.md-heading { font-size: 13.5px; }
   color: #94a3b8;
 }
 
+/* Continuous Multi-Turn Chat Layout */
+.workspace-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  flex-shrink: 0;
+}
+
+.chat-reply-dock {
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.chat-reply-dock.drag-over {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.chat-turn-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.chat-turn-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 @keyframes sb-spin {
   from {
     transform: rotate(0deg);

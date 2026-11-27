@@ -7,16 +7,14 @@ import {
   Copy,
   FileDiff,
   FileText,
-  FolderGit2,
   FolderOpen,
   GitBranch,
   Loader2,
   MessageSquare,
   MessageSquarePlus,
   Paperclip,
-  Play,
   RefreshCw,
-  Shield,
+  Send,
   Sparkles,
   Square,
   Trash2,
@@ -52,6 +50,7 @@ interface CommandDeckProps {
   activeProjectId: string | null;
   onSelectProject: (projectId: string | null) => void;
   onCreateThread: (projectId: string | null, title?: string) => Promise<ChatThread | null>;
+  onDeleteThread: (threadId: string) => Promise<void>;
   onEnqueueTask: (input: CreateTaskInput) => Promise<OrchestratedTask | null>;
   onRetryTask: (taskId: string) => Promise<void>;
   onCancelTask: (taskId: string) => Promise<void>;
@@ -81,7 +80,7 @@ const EXAMPLE_PROMPTS = [
       '1. Inspect the repository architecture and list key files to modify.\n2. Implement the requested feature with clean TypeScript types.\n3. Write unit tests and verify everything passes.',
   },
   {
-    label: 'Large Codebase Audit',
+    label: 'Codebase Audit',
     mode: 'coding' as const,
     prompt:
       'Audit the entire codebase for security risks, race conditions, and dead code, then produce a prioritized refactoring checklist.',
@@ -116,6 +115,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   activeProjectId,
   onSelectProject,
   onCreateThread,
+  onDeleteThread,
   onEnqueueTask,
   onRetryTask,
   onCancelTask,
@@ -133,18 +133,22 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   onOpenExternal,
 }) => {
   const activeProject = state.projects.find((p) => p.id === activeProjectId) ?? null;
-  const projectThreads = useMemo(
-    () =>
-      state.threads.filter((t) =>
-        activeProjectId ? t.projectId === activeProjectId : t.projectId === null
-      ),
-    [state.threads, activeProjectId]
-  );
 
-  const [activeThreadId, setActiveThreadId] = useState<string>('');
+  // All threads for the current project (or all threads when viewing General / All)
+  const visibleThreads = useMemo(() => {
+    const list = activeProjectId
+      ? state.threads.filter((t) => t.projectId === activeProjectId)
+      : state.threads;
+    return [...list].sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [state.threads, activeProjectId]);
+
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(
+    visibleThreads[0]?.id ?? null
+  );
   const [inspectorTab, setInspectorTab] = useState<'response' | 'changes'>('response');
   const [gitStatus, setGitStatus] = useState<GitWorkspaceStatus | null>(null);
   const [loadingGit, setLoadingGit] = useState(false);
+
   const [prompt, setPrompt] = useState('');
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
@@ -161,12 +165,11 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   const [forcedBaseModel, setForcedBaseModel] = useState<string>('');
   const [forcedEffort, setForcedEffort] = useState<EffortLevel | ''>('');
   const [autoDecompose, setAutoDecompose] = useState(state.settings.autoDecomposeMultiStep);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
-    state.tasks[0]?.id ?? null
-  );
+
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
-  const detailEndRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const replyInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const hasRunningTask = state.tasks.some(
     (t) => t.status === 'running' || t.status === 'planning'
@@ -177,6 +180,45 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
     const id = setInterval(() => setNowTick(Date.now()), 200);
     return () => clearInterval(id);
   }, [hasRunningTask]);
+
+  useEffect(() => {
+    if (activeProject) {
+      setWorkspaceDir(activeProject.path);
+      setWorkspaceScope(activeProject.scope);
+      setMode('coding');
+    } else if (!workspaceDir && state.settings.defaultWorkspaceDir) {
+      setWorkspaceDir(state.settings.defaultWorkspaceDir);
+    }
+  }, [activeProject, state.settings.defaultWorkspaceDir, workspaceDir]);
+
+  // Keep activeThreadId valid when switching projects or deleting a thread
+  useEffect(() => {
+    if (activeThreadId && visibleThreads.some((t) => t.id === activeThreadId)) {
+      return;
+    }
+    setActiveThreadId(visibleThreads[0]?.id ?? null);
+  }, [activeThreadId, visibleThreads]);
+
+  const activeThread = useMemo(
+    () => visibleThreads.find((t) => t.id === activeThreadId) ?? null,
+    [visibleThreads, activeThreadId]
+  );
+
+  // All turns in the currently selected chat thread, chronological (oldest -> newest)
+  const threadTurns = useMemo(() => {
+    if (!activeThreadId) return [];
+    return state.tasks
+      .filter((t) => t.threadId === activeThreadId)
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }, [state.tasks, activeThreadId]);
+
+  // Auto-scroll chat timeline smoothly when new turn arrives
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [activeThreadId, threadTurns.length]);
 
   const effectiveGitDir =
     (mode === 'coding' ? workspaceDir : '') || activeProject?.path || '';
@@ -198,39 +240,6 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   useEffect(() => {
     void refreshGit();
   }, [effectiveGitDir, state.tasks.length, hasRunningTask]);
-
-  useEffect(() => {
-    if (activeProject) {
-      setWorkspaceDir(activeProject.path);
-      setWorkspaceScope(activeProject.scope);
-      setMode('coding');
-    } else if (!workspaceDir && state.settings.defaultWorkspaceDir) {
-      setWorkspaceDir(state.settings.defaultWorkspaceDir);
-    }
-  }, [activeProject, state.settings.defaultWorkspaceDir, workspaceDir]);
-
-  useEffect(() => {
-    if (activeThreadId && projectThreads.some((t) => t.id === activeThreadId)) {
-      return;
-    }
-    setActiveThreadId(projectThreads[0]?.id ?? '');
-  }, [activeThreadId, projectThreads]);
-
-  const filteredTasks = useMemo(() => {
-    return state.tasks.filter((t) => {
-      if (activeThreadId) return t.threadId === activeThreadId;
-      if (activeProjectId) return t.projectId === activeProjectId;
-      return true;
-    });
-  }, [state.tasks, activeProjectId, activeThreadId]);
-
-  const selectedTask = useMemo(() => {
-    if (selectedTaskId) {
-      const found = filteredTasks.find((t) => t.id === selectedTaskId);
-      if (found) return found;
-    }
-    return filteredTasks[0] ?? null;
-  }, [selectedTaskId, filteredTasks]);
 
   const ingestBrowserFiles = async (files: File[]) => {
     for (const file of files) {
@@ -270,10 +279,20 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
     }
   };
 
+  const handleStartNewChat = async () => {
+    const created = await onCreateThread(activeProjectId, 'New Chat');
+    if (created) {
+      setActiveThreadId(created.id);
+      setInspectorTab('response');
+      setTimeout(() => replyInputRef.current?.focus(), 40);
+    }
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const cleaned = prompt.trim() || (attachments.length > 0 ? 'Analyze the attached file(s).' : '');
     if (!cleaned) return;
+
     let resolvedForcedModel: string | null = null;
     let resolvedForcedEffort: EffortLevel | null = null;
     if (forcedAccountId) {
@@ -299,20 +318,11 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
       }
     }
 
-    let targetThreadId = activeThreadId || null;
-    if (!targetThreadId && activeProjectId) {
-      const createdThread = await onCreateThread(activeProjectId);
-      if (createdThread) {
-        targetThreadId = createdThread.id;
-        setActiveThreadId(createdThread.id);
-      }
-    }
-
     const created = await onEnqueueTask({
       prompt: cleaned,
       attachments: attachments.length > 0 ? attachments : undefined,
       projectId: activeProjectId,
-      threadId: targetThreadId,
+      threadId: activeThreadId,
       mode,
       permissionMode: mode === 'coding' ? permissionMode : undefined,
       fastMode,
@@ -323,10 +333,12 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
       forcedModel: resolvedForcedModel,
       forcedEffort: resolvedForcedEffort,
     });
+
     setPrompt('');
     setAttachments([]);
-    if (created) {
-      setSelectedTaskId(created.id);
+    setInspectorTab('response');
+    if (created?.threadId) {
+      setActiveThreadId(created.threadId);
     }
   };
 
@@ -336,418 +348,181 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
     setTimeout(() => setCopiedId((cur) => (cur === id ? null : cur)), 1800);
   };
 
+  const latestTurn = threadTurns[threadTurns.length - 1];
+
   return (
     <div className="command-deck">
-      <form
-        className={`card composer-card ${dragOver ? 'drag-over' : ''}`}
-        onSubmit={handleSubmit}
-        onDragOver={(e) => {
-          e.preventDefault();
-          if (!dragOver) setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => void handleDrop(e)}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <Sparkles size={15} style={{ color: 'var(--accent)' }} />
-            <strong style={{ fontSize: 13.5 }}>Assign a Task</strong>
+      {/* Compact Top Workspace & Mode Bar */}
+      <div className="card workspace-bar">
+        <div className="composer-group">
+          <select
+            className="select-compact"
+            aria-label="Active project"
+            value={activeProjectId ?? ''}
+            onChange={(e) => onSelectProject(e.target.value || null)}
+          >
+            <option value="">Workspace: General (All)</option>
+            {state.projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                Project: {p.name}
+              </option>
+            ))}
+          </select>
 
-            <select
-              className="select-compact"
-              aria-label="Active project"
-              value={activeProjectId ?? ''}
-              onChange={(e) => onSelectProject(e.target.value || null)}
-            >
-              <option value="">Workspace: General (All)</option>
-              {state.projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  Project: {p.name}
-                </option>
-              ))}
-            </select>
-
-            <select
-              className="select-compact"
-              aria-label="Active chat thread"
-              value={activeThreadId}
-              onChange={(e) => setActiveThreadId(e.target.value)}
-            >
-              <option value="">All Threads</option>
-              {projectThreads.map((thr) => (
-                <option key={thr.id} value={thr.id}>
-                  Thread: {thr.title}
-                </option>
-              ))}
-            </select>
-
+          <div className="segmented" role="group" aria-label="Task mode">
             <button
               type="button"
-              className="btn btn-sm"
-              title="Start a new multi-turn chat thread"
-              onClick={async () => {
-                const thr = await onCreateThread(activeProjectId, 'New Chat Thread');
-                if (thr) setActiveThreadId(thr.id);
-              }}
+              className={mode === 'coding' ? 'active' : ''}
+              onClick={() => setMode('coding')}
             >
-              <MessageSquarePlus size={13} />
-              New Thread
+              Coding
+            </button>
+            <button
+              type="button"
+              className={mode === 'general' ? 'active' : ''}
+              onClick={() => setMode('general')}
+            >
+              General
             </button>
           </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {EXAMPLE_PROMPTS.map((ex) => (
+
+          {mode === 'coding' && (
+            <>
               <button
-                key={ex.label}
                 type="button"
-                className="btn btn-ghost btn-sm"
-                style={{ fontSize: 11.5 }}
-                onClick={() => {
-                  setPrompt(ex.prompt);
-                  setMode(ex.mode);
+                className="btn btn-sm"
+                title={workspaceDir || 'Select workspace folder'}
+                onClick={async () => {
+                  const picked = await onPickFolder();
+                  if (picked) setWorkspaceDir(picked);
                 }}
               >
-                {ex.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {activeThreadId && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-secondary)' }}>
-            <FolderGit2 size={12} style={{ color: 'var(--accent)' }} />
-            <span>
-              Multi-turn memory active — follow-ups automatically carry context across model switches and failovers.
-            </span>
-          </div>
-        )}
-
-        <textarea
-          className="composer-textarea scroller"
-          placeholder="Ask anything, paste screenshots (⌘V), or drop files here — numbered steps auto-split across models... (⌘/Ctrl + Enter to run)"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          onPaste={(e) => void handlePaste(e)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-              void handleSubmit();
-            }
-          }}
-        />
-
-        {attachments.length > 0 && (
-          <div className="attachment-strip">
-            {attachments.map((att) => (
-              <div key={att.id} className="attachment-chip" title={att.path}>
-                {att.isImage && att.previewDataUrl ? (
-                  <img src={att.previewDataUrl} alt={att.name} className="attachment-thumb" />
-                ) : (
-                  <FileText size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
-                )}
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div
-                    style={{
-                      fontWeight: 600,
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {att.name}
-                  </div>
-                  <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
-                    {Math.max(1, Math.round(att.size / 1024))} KB
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon"
-                  style={{ width: 22, height: 22, padding: 2 }}
-                  aria-label={`Remove ${att.name}`}
-                  onClick={() =>
-                    setAttachments((prev) => prev.filter((a) => a.id !== att.id))
-                  }
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="composer-controls">
-          <div className="composer-group">
-            <div className="segmented" role="group" aria-label="Task mode">
-              <button
-                type="button"
-                className={mode === 'coding' ? 'active' : ''}
-                onClick={() => setMode('coding')}
-              >
-                Coding
-              </button>
-              <button
-                type="button"
-                className={mode === 'general' ? 'active' : ''}
-                onClick={() => setMode('general')}
-              >
-                General
-              </button>
-            </div>
-
-            {mode === 'coding' && (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  title={workspaceDir || 'Select workspace folder'}
-                  onClick={async () => {
-                    const picked = await onPickFolder();
-                    if (picked) setWorkspaceDir(picked);
+                <FolderOpen size={13} />
+                <span
+                  className="mono"
+                  style={{
+                    maxWidth: 165,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  <FolderOpen size={13} />
-                  <span
-                    className="mono"
-                    style={{
-                      maxWidth: 165,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {workspaceDir ? workspaceDir.split(/[\\/]/).slice(-2).join('/') : 'Choose Folder'}
-                  </span>
-                </button>
+                  {workspaceDir ? workspaceDir.split(/[\\/]/).slice(-2).join('/') : 'Choose Folder'}
+                </span>
+              </button>
 
-                <select
-                  className="select-compact"
-                  aria-label="Coding agent permissions"
-                  value={permissionMode}
-                  onChange={(e) => setPermissionMode(e.target.value as CodingPermissionMode)}
-                  title="Controls whether headless coding agents can edit files and run commands"
-                >
-                  <option value="accept-edits">Edits: Auto-Approve</option>
-                  <option value="full-auto">Full Auto (Edits + Shell)</option>
-                  <option value="read-only">Plan / Read-Only</option>
-                </select>
-              </>
-            )}
-
-            <select
-              className="select-compact"
-              aria-label="Account scope"
-              value={workspaceScope}
-              onChange={(e) => setWorkspaceScope(e.target.value as AccountScope)}
-              title="Workspace scope guard (Personal vs Team)"
-            >
-              <option value="any">Scope: Any Account</option>
-              <option value="team">Scope: Team First</option>
-              <option value="personal">Scope: Personal First</option>
-            </select>
-
-            <select
-              className="select-compact"
-              aria-label="Routing mode"
-              value={forcedAccountId}
-              onChange={(e) => {
-                setForcedAccountId(e.target.value);
-                setForcedBaseModel('');
-                setForcedEffort('');
-              }}
-            >
-              <option value="">Routing: Auto (Best Model)</option>
-              {[...state.accounts]
-                .sort((a, b) => a.priority - b.priority)
-                .map((acc) => (
-                  <option key={acc.id} value={acc.id}>
-                    Pin: {acc.name}
-                  </option>
-                ))}
-            </select>
-
-            {forcedAccountId && (() => {
-              const pinned = state.accounts.find((a) => a.id === forcedAccountId);
-              if (!pinned) return null;
-              const groups = groupModelsByBase(
-                pinned.provider,
-                state.discoveredModels?.[pinned.provider],
-                PROVIDER_MODELS[pinned.provider] ?? []
-              );
-              const parsedDefault = splitModelAndEffort(pinned.model);
-              const currentBase = forcedBaseModel || parsedDefault.baseId;
-              const activeGroup = groups.find((g) => g.baseId === currentBase);
-              return (
-                <>
-                  <select
-                    className="select-compact"
-                    aria-label="Model override"
-                    value={forcedBaseModel}
-                    onChange={(e) => {
-                      const nextBase = e.target.value;
-                      setForcedBaseModel(nextBase);
-                      const nextGroup = groups.find((g) => g.baseId === nextBase);
-                      if (nextGroup && forcedEffort && !nextGroup.efforts.includes(forcedEffort)) {
-                        setForcedEffort(pickBestEffort(nextGroup) ?? '');
-                      }
-                    }}
-                    title="Override model for this task only"
-                  >
-                    <option value="">
-                      Model: {activeGroup?.label ?? parsedDefault.baseId} (Default)
-                    </option>
-                    {groups.map((g) => (
-                      <option key={g.baseId} value={g.baseId}>
-                        {g.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  {activeGroup && activeGroup.efforts.length > 0 && (
-                    <select
-                      className="select-compact"
-                      aria-label="Effort override"
-                      value={forcedEffort}
-                      onChange={(e) => setForcedEffort(e.target.value as EffortLevel | '')}
-                      title="Override reasoning effort for this task"
-                    >
-                      <option value="">
-                        Effort:{' '}
-                        {parsedDefault.effort
-                          ? EFFORT_LABELS[parsedDefault.effort]
-                          : pinned.effort
-                            ? EFFORT_LABELS[pinned.effort]
-                            : 'Default'}
-                      </option>
-                      {activeGroup.efforts.map((lvl) => (
-                        <option key={lvl} value={lvl}>
-                          {EFFORT_LABELS[lvl]}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </>
-              );
-            })()}
-
-            <button
-              type="button"
-              className="btn btn-sm"
-              title="Attach images, PDFs, or code files (or paste images with ⌘V)"
-              onClick={async () => {
-                const picked = await onPickFiles();
-                if (picked.length > 0) {
-                  setAttachments((prev) => [...prev, ...picked]);
-                }
-              }}
-            >
-              <Paperclip size={13} />
-              Attach{attachments.length > 0 ? ` (${attachments.length})` : ''}
-            </button>
-
-            <label
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                fontSize: 12,
-                color: fastMode ? 'var(--accent)' : 'var(--text-secondary)',
-                fontWeight: fastMode ? 600 : 400,
-                cursor: 'pointer',
-              }}
-              title="Use low reasoning effort & skip slow MCP/skill startup for rapid replies"
-            >
-              <input
-                type="checkbox"
-                checked={fastMode}
-                onChange={(e) => setFastMode(e.target.checked)}
-              />
-              <Zap size={12} />
-              Fast
-            </label>
-
-            <label
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                fontSize: 12,
-                color: 'var(--text-secondary)',
-                cursor: 'pointer',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={autoDecompose}
-                onChange={(e) => setAutoDecompose(e.target.checked)}
-              />
-              Auto-split steps
-            </label>
-          </div>
-
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={(!prompt.trim() && attachments.length === 0) || state.accounts.length === 0}
-          >
-            <Play size={14} />
-            Queue & Run
-          </button>
+              <select
+                className="select-compact"
+                aria-label="Coding agent permissions"
+                value={permissionMode}
+                onChange={(e) => setPermissionMode(e.target.value as CodingPermissionMode)}
+                title="Controls whether headless coding agents can edit files and run commands"
+              >
+                <option value="accept-edits">Edits: Auto-Approve</option>
+                <option value="full-auto">Full Auto (Edits + Shell)</option>
+                <option value="read-only">Plan / Read-Only</option>
+              </select>
+            </>
+          )}
         </div>
-      </form>
 
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => void handleStartNewChat()}>
+          <MessageSquarePlus size={13} />
+          New Chat
+        </button>
+      </div>
+
+      {/* Main Split: Left Chats List | Right Continuous Chat + Bottom Reply + Git Changes */}
       <div className="task-workspace">
-        {/* Left: Task Queue */}
-        <section className="card task-list-panel" aria-label="Task queue">
+        {/* Left: Chat Threads */}
+        <section className="card task-list-panel" aria-label="Chats">
           <div className="panel-header">
-            <h2>{activeThreadId ? 'Thread Turns' : 'Task Queue'}</h2>
-            <span className="pill">{filteredTasks.length} total</span>
+            <h2>Chats</h2>
+            <span className="pill">{visibleThreads.length}</span>
           </div>
 
-          {filteredTasks.length === 0 ? (
+          {visibleThreads.length === 0 ? (
             <div className="empty-state">
               <Sparkles size={24} style={{ opacity: 0.5 }} />
-              <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>No tasks yet</div>
+              <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>No chats yet</div>
               <div style={{ fontSize: 12 }}>
-                Submit a single or multi-step task above. Switchboard will execute steps one by one and switch accounts automatically on limits.
+                Type your first message below. Follow-up replies automatically continue in the same thread across models.
               </div>
             </div>
           ) : (
             <div className="task-list-scroll scroller">
-              {filteredTasks.map((task) => {
-                const doneSteps = task.subtasks.filter((s) => s.status === 'completed').length;
-                const catMeta = TASK_CATEGORY_META[task.category];
+              {visibleThreads.map((thr) => {
+                const turns = state.tasks.filter((t) => t.threadId === thr.id);
+                const newest = turns[0]; // state.tasks is newest-first
+                const failovers = turns.reduce((s, t) => s + t.failoverCount, 0);
+                const status = newest?.status ?? 'completed';
                 return (
-                  <button
-                    key={task.id}
-                    type="button"
-                    className={`task-item ${selectedTask?.id === task.id ? 'active' : ''}`}
-                    onClick={() => setSelectedTaskId(task.id)}
+                  <div
+                    key={thr.id}
+                    className={`task-item ${activeThreadId === thr.id ? 'active' : ''}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      setActiveThreadId(thr.id);
+                      setInspectorTab('response');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setActiveThreadId(thr.id);
+                        setInspectorTab('response');
+                      }
+                    }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                      <span style={{ marginTop: 2 }}>
-                        <StatusIcon status={task.status} />
-                      </span>
-                      <span className="task-item-title">{task.title}</span>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, minWidth: 0 }}>
+                        <span style={{ marginTop: 2 }}>
+                          {newest ? (
+                            <StatusIcon status={status} />
+                          ) : (
+                            <MessageSquare size={14} style={{ color: 'var(--text-muted)' }} />
+                          )}
+                        </span>
+                        <span className="task-item-title">{thr.title}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-icon"
+                        style={{ width: 22, height: 22, padding: 2, flexShrink: 0 }}
+                        title="Delete chat thread"
+                        aria-label="Delete chat thread"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void onDeleteThread(thr.id);
+                        }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
                     </div>
                     <div className="task-item-meta">
-                      <span className="pill">{catMeta.shortLabel}</span>
                       <span>
-                        {doneSteps}/{task.subtasks.length} step{task.subtasks.length === 1 ? '' : 's'}
+                        {turns.length} turn{turns.length === 1 ? '' : 's'}
                       </span>
-                      {task.failoverCount > 0 && (
+                      {newest && (
+                        <span className="pill">
+                          {TASK_CATEGORY_META[newest.category].shortLabel}
+                        </span>
+                      )}
+                      {failovers > 0 && (
                         <span className="pill pill-warning">
-                          {task.failoverCount} failover{task.failoverCount > 1 ? 's' : ''}
+                          {failovers} failover{failovers > 1 ? 's' : ''}
                         </span>
                       )}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
           )}
         </section>
 
-        {/* Right: Execution Inspector & Git Changes */}
-        <section className="card task-detail-panel" aria-label="Execution inspector">
+        {/* Right: Continuous Multi-Turn Chat & Git Changes */}
+        <section className="card task-detail-panel" aria-label="Chat and workspace changes">
           <div className="panel-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
               <div className="segmented" role="tablist" aria-label="Workspace inspector view">
@@ -760,7 +535,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                 >
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                     <MessageSquare size={12} />
-                    Response
+                    Chat{threadTurns.length > 0 ? ` (${threadTurns.length})` : ''}
                   </span>
                 </button>
                 <button
@@ -793,38 +568,20 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               )}
             </div>
 
-            {inspectorTab === 'response' && selectedTask && (
-              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                {(selectedTask.status === 'running' || selectedTask.status === 'queued') && (
-                  <button
-                    type="button"
-                    className="btn btn-danger btn-sm"
-                    onClick={() => void onCancelTask(selectedTask.id)}
-                  >
-                    <Square size={12} />
-                    Stop
-                  </button>
-                )}
-                {(selectedTask.status === 'failed' || selectedTask.status === 'cancelled') && (
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-sm"
-                    onClick={() => void onRetryTask(selectedTask.id)}
-                  >
-                    <RefreshCw size={12} />
-                    Retry
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon"
-                  title="Delete task"
-                  aria-label="Delete task"
-                  onClick={() => void onDeleteTask(selectedTask.id)}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
+            {activeThread && (
+              <span
+                style={{
+                  fontSize: 12,
+                  color: 'var(--text-secondary)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  maxWidth: 260,
+                }}
+                title={activeThread.title}
+              >
+                {activeThread.title}
+              </span>
             )}
           </div>
 
@@ -832,7 +589,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
             <GitChangesPanel
               status={gitStatus}
               loading={loadingGit}
-              defaultCommitMessage={selectedTask?.title}
+              defaultCommitMessage={latestTurn?.title || activeThread?.title}
               onRefresh={refreshGit}
               onGetFileDiff={onGitFileDiff}
               onCheckout={onGitCheckout}
@@ -842,234 +599,489 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               onCreatePr={onGitCreatePr}
               onOpenExternal={onOpenExternal}
             />
-          ) : !selectedTask ? (
-            <div className="empty-state">
-              <Shield size={26} style={{ opacity: 0.45 }} />
-              <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                Execution Inspector
-              </div>
-              <div style={{ fontSize: 12.5, maxWidth: 380 }}>
-                Select a task to inspect model routing decisions, live streaming output, and automatic failover handoffs.
-              </div>
-            </div>
           ) : (
             <>
-              <div
-                style={{
-                  padding: '10px 16px',
-                  borderBottom: '1px solid var(--border-subtle)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 10,
-                  flexShrink: 0,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <StatusIcon status={selectedTask.status} />
-                    <strong
-                      style={{
-                        fontSize: 13.5,
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }}
-                    >
-                      {selectedTask.title}
-                    </strong>
+              {/* Scrollable Multi-Turn Conversation Timeline */}
+              <div ref={chatScrollRef} className="task-detail-scroll scroller">
+                {threadTurns.length === 0 ? (
+                  <div className="empty-state">
+                    <Sparkles size={26} style={{ color: 'var(--accent)', opacity: 0.7 }} />
+                    <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>
+                      Start a conversation
+                    </div>
+                    <div style={{ fontSize: 12.5, maxWidth: 420 }}>
+                      Switchboard chooses the best model for every turn, keeps multi-turn memory even when switching between Claude and Gemini, and fails over automatically if any account hits a limit.
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', marginTop: 6 }}>
+                      {EXAMPLE_PROMPTS.map((ex) => (
+                        <button
+                          key={ex.label}
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => {
+                            setPrompt(ex.prompt);
+                            setMode(ex.mode);
+                            replyInputRef.current?.focus();
+                          }}
+                        >
+                          {ex.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div
-                    style={{
-                      fontSize: 11.5,
-                      color: 'var(--text-secondary)',
-                      marginTop: 2,
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: 8,
-                    }}
-                  >
-                    <span>Category: {TASK_CATEGORY_META[selectedTask.category].label}</span>
-                    <span>•</span>
-                    <span>Scope: {selectedTask.workspaceScope}</span>
-                    {selectedTask.workspaceDir && (
-                      <>
-                        <span>•</span>
-                        <span className="mono">{selectedTask.workspaceDir}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
+                ) : (
+                  threadTurns.map((turn) => (
+                    <div key={turn.id} className="chat-turn-block">
+                      {/* User Bubble */}
+                      <div className="user-prompt-bubble">
+                        {turn.attachments && turn.attachments.length > 0 && (
+                          <div className="bubble-attachments">
+                            {turn.attachments.map((att) =>
+                              att.isImage && att.previewDataUrl ? (
+                                <img
+                                  key={att.id}
+                                  src={att.previewDataUrl}
+                                  alt={att.name}
+                                  className="bubble-img-preview"
+                                />
+                              ) : (
+                                <span key={att.id} className="pill mono">
+                                  <FileText size={11} />
+                                  {att.name}
+                                </span>
+                              )
+                            )}
+                          </div>
+                        )}
+                        <div>{turn.prompt}</div>
+                      </div>
+
+                      {turn.error && (
+                        <div
+                          style={{
+                            padding: '10px 12px',
+                            borderRadius: 'var(--radius-md)',
+                            background: 'var(--danger-soft)',
+                            color: 'var(--danger)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                            fontSize: 12.5,
+                          }}
+                        >
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <AlertTriangle size={15} />
+                            <span>{turn.error}</span>
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-sm"
+                            onClick={() => void onRetryTask(turn.id)}
+                          >
+                            <RefreshCw size={12} />
+                            Retry
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Assistant Subtask Cards */}
+                      {turn.subtasks.map((sub) => {
+                        const meta = TASK_CATEGORY_META[sub.category];
+                        const isRunning = sub.status === 'running' || sub.status === 'retrying';
+                        const elapsedSec = sub.startedAt
+                          ? (((sub.completedAt ?? nowTick) - sub.startedAt) / 1000).toFixed(1)
+                          : null;
+
+                        return (
+                          <article key={sub.id} className="subtask-card">
+                            <div className="subtask-header">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                <StatusIcon status={sub.status} />
+                                <strong style={{ fontSize: 13 }}>
+                                  {turn.subtasks.length > 1
+                                    ? `Step ${sub.index + 1}: ${sub.title}`
+                                    : sub.assignedAccountName || 'Assistant'}
+                                </strong>
+                                <span className="pill">{meta.shortLabel}</span>
+                                {elapsedSec && (
+                                  <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                    {elapsedSec}s
+                                  </span>
+                                )}
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                                {sub.assignedAccountName && (
+                                  <span className="pill pill-accent mono">
+                                    {sub.assignedAccountName} · {sub.assignedModel}
+                                  </span>
+                                )}
+                                {(turn.status === 'running' || turn.status === 'queued') && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-danger btn-sm"
+                                    onClick={() => void onCancelTask(turn.id)}
+                                  >
+                                    <Square size={11} />
+                                    Stop
+                                  </button>
+                                )}
+                                {(turn.status === 'failed' || turn.status === 'cancelled') && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm"
+                                    onClick={() => void onRetryTask(turn.id)}
+                                  >
+                                    <RefreshCw size={11} />
+                                    Retry
+                                  </button>
+                                )}
+                                {sub.output && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={() => void handleCopy(sub.id, sub.output)}
+                                  >
+                                    <Copy size={12} />
+                                    {copiedId === sub.id ? 'Copied' : 'Copy'}
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost btn-icon"
+                                  style={{ width: 24, height: 24 }}
+                                  title="Delete this turn"
+                                  aria-label="Delete turn"
+                                  onClick={() => void onDeleteTask(turn.id)}
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {sub.attempts.length > 1 && (
+                              <div className="attempt-trail">
+                                <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                                  Failover Trail:
+                                </span>
+                                {sub.attempts.map((att, idx) => (
+                                  <React.Fragment key={`${sub.id}-${att.attemptNumber}`}>
+                                    {idx > 0 && <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} />}
+                                    <span
+                                      className={`pill ${
+                                        att.status === 'completed'
+                                          ? 'pill-success'
+                                          : att.status === 'rate-limited'
+                                            ? 'pill-warning'
+                                            : att.status === 'failed'
+                                              ? 'pill-danger'
+                                              : 'pill-accent'
+                                      }`}
+                                      title={att.reason || att.model}
+                                    >
+                                      {att.accountName}
+                                      {att.status === 'rate-limited'
+                                        ? ' (Limit Hit)'
+                                        : att.status === 'failed'
+                                          ? ' (Error)'
+                                          : ''}
+                                    </span>
+                                  </React.Fragment>
+                                ))}
+                              </div>
+                            )}
+
+                            {isRunning && sub.output && (
+                              <div className="streaming-status-bar" role="status" aria-live="polite">
+                                <span className="thinking-pill" style={{ fontSize: 11.5 }}>
+                                  <span className="thinking-orb" />
+                                  <span>{sub.liveStatus || 'Streaming response...'}</span>
+                                </span>
+                                {elapsedSec && <span className="mono">{elapsedSec}s</span>}
+                              </div>
+                            )}
+
+                            {isRunning && !sub.output ? (
+                              <div className="live-thinking-box" role="status" aria-live="polite">
+                                <div className="thinking-status-row">
+                                  <span className="thinking-pill">
+                                    <span className="thinking-orb" />
+                                    <span>
+                                      {sub.liveStatus ||
+                                        `Thinking with ${sub.assignedAccountName ?? 'model'}...`}
+                                    </span>
+                                  </span>
+                                  {elapsedSec && <span className="mono">{elapsedSec}s</span>}
+                                </div>
+                                <div className="shimmer-lines" aria-hidden="true">
+                                  <div className="shimmer-line" style={{ width: '92%' }} />
+                                  <div className="shimmer-line" style={{ width: '78%' }} />
+                                  <div className="shimmer-line" style={{ width: '61%' }} />
+                                </div>
+                              </div>
+                            ) : sub.output ? (
+                              <div className="assistant-response-body">
+                                <MarkdownView text={sub.output} streaming={isRunning} />
+                              </div>
+                            ) : (
+                              <div
+                                style={{
+                                  padding: '14px 16px',
+                                  fontSize: 12.5,
+                                  color: 'var(--text-secondary)',
+                                  background: 'var(--bg-surface)',
+                                }}
+                              >
+                                {sub.status === 'pending'
+                                  ? 'Queued — waiting for previous step...'
+                                  : sub.error || 'No output.'}
+                              </div>
+                            )}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  ))
+                )}
               </div>
 
-              <div className="task-detail-scroll scroller">
-                <div className="user-prompt-bubble">
-                  {selectedTask.attachments && selectedTask.attachments.length > 0 && (
-                    <div className="bubble-attachments">
-                      {selectedTask.attachments.map((att) =>
-                        att.isImage && att.previewDataUrl ? (
-                          <img
-                            key={att.id}
-                            src={att.previewDataUrl}
-                            alt={att.name}
-                            className="bubble-img-preview"
-                          />
+              {/* Docked Bottom Reply Composer (Claude / ChatGPT Style!) */}
+              <form
+                className={`chat-reply-dock ${dragOver ? 'drag-over' : ''}`}
+                onSubmit={handleSubmit}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (!dragOver) setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => void handleDrop(e)}
+              >
+                {attachments.length > 0 && (
+                  <div className="attachment-strip">
+                    {attachments.map((att) => (
+                      <div key={att.id} className="attachment-chip" title={att.path}>
+                        {att.isImage && att.previewDataUrl ? (
+                          <img src={att.previewDataUrl} alt={att.name} className="attachment-thumb" />
                         ) : (
-                          <span key={att.id} className="pill mono">
-                            <FileText size={11} />
+                          <FileText size={16} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                        )}
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
                             {att.name}
-                          </span>
-                        )
-                      )}
-                    </div>
-                  )}
-                  <div>{selectedTask.prompt}</div>
-                </div>
-
-                {selectedTask.error && (
-                  <div
-                    style={{
-                      padding: '10px 12px',
-                      borderRadius: 'var(--radius-md)',
-                      background: 'var(--danger-soft)',
-                      color: 'var(--danger)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      fontSize: 12.5,
-                    }}
-                  >
-                    <AlertTriangle size={15} />
-                    <span>{selectedTask.error}</span>
+                          </div>
+                          <div style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+                            {Math.max(1, Math.round(att.size / 1024))} KB
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-icon"
+                          style={{ width: 22, height: 22, padding: 2 }}
+                          aria-label={`Remove ${att.name}`}
+                          onClick={() =>
+                            setAttachments((prev) => prev.filter((a) => a.id !== att.id))
+                          }
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
 
-                {selectedTask.subtasks.map((sub) => {
-                  const meta = TASK_CATEGORY_META[sub.category];
-                  const isRunning = sub.status === 'running' || sub.status === 'retrying';
-                  const elapsedSec = sub.startedAt
-                    ? (((sub.completedAt ?? nowTick) - sub.startedAt) / 1000).toFixed(1)
-                    : null;
+                <textarea
+                  ref={replyInputRef}
+                  className="composer-textarea scroller"
+                  style={{ minHeight: 58, maxHeight: 160 }}
+                  placeholder={
+                    threadTurns.length > 0
+                      ? 'Reply to continue this chat (remembers prior turns even across model switches)... ⌘V to paste images · ⌘/Ctrl + Enter to send'
+                      : 'Ask anything, paste screenshots (⌘V), or drop files... (⌘/Ctrl + Enter to send)'
+                  }
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onPaste={(e) => void handlePaste(e)}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      void handleSubmit();
+                    }
+                  }}
+                />
 
-                  return (
-                    <article key={sub.id} className="subtask-card">
-                      <div className="subtask-header">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                          <StatusIcon status={sub.status} />
-                          <strong style={{ fontSize: 13 }}>
-                            {selectedTask.subtasks.length > 1
-                              ? `Step ${sub.index + 1}: ${sub.title}`
-                              : sub.assignedAccountName || 'Assistant'}
-                          </strong>
-                          <span className="pill">{meta.shortLabel}</span>
-                          {elapsedSec && (
-                            <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                              {elapsedSec}s
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                          {sub.assignedAccountName && (
-                            <span className="pill pill-accent mono">
-                              {sub.assignedAccountName} · {sub.assignedModel}
-                            </span>
-                          )}
-                          {sub.output && (
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => void handleCopy(sub.id, sub.output)}
+                <div className="composer-controls">
+                  <div className="composer-group">
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      title="Attach images, PDFs, or code files (or paste images with ⌘V)"
+                      onClick={async () => {
+                        const picked = await onPickFiles();
+                        if (picked.length > 0) {
+                          setAttachments((prev) => [...prev, ...picked]);
+                        }
+                      }}
+                    >
+                      <Paperclip size={13} />
+                      Attach{attachments.length > 0 ? ` (${attachments.length})` : ''}
+                    </button>
+
+                    <select
+                      className="select-compact"
+                      aria-label="Account scope"
+                      value={workspaceScope}
+                      onChange={(e) => setWorkspaceScope(e.target.value as AccountScope)}
+                    >
+                      <option value="any">Scope: Any</option>
+                      <option value="team">Scope: Team First</option>
+                      <option value="personal">Scope: Personal First</option>
+                    </select>
+
+                    <select
+                      className="select-compact"
+                      aria-label="Routing mode"
+                      value={forcedAccountId}
+                      onChange={(e) => {
+                        setForcedAccountId(e.target.value);
+                        setForcedBaseModel('');
+                        setForcedEffort('');
+                      }}
+                    >
+                      <option value="">Routing: Auto</option>
+                      {[...state.accounts]
+                        .sort((a, b) => a.priority - b.priority)
+                        .map((acc) => (
+                          <option key={acc.id} value={acc.id}>
+                            Pin: {acc.name}
+                          </option>
+                        ))}
+                    </select>
+
+                    {forcedAccountId && (() => {
+                      const pinned = state.accounts.find((a) => a.id === forcedAccountId);
+                      if (!pinned) return null;
+                      const groups = groupModelsByBase(
+                        pinned.provider,
+                        state.discoveredModels?.[pinned.provider],
+                        PROVIDER_MODELS[pinned.provider] ?? []
+                      );
+                      const parsedDefault = splitModelAndEffort(pinned.model);
+                      const currentBase = forcedBaseModel || parsedDefault.baseId;
+                      const activeGroup = groups.find((g) => g.baseId === currentBase);
+                      return (
+                        <>
+                          <select
+                            className="select-compact"
+                            aria-label="Model override"
+                            value={forcedBaseModel}
+                            onChange={(e) => {
+                              const nextBase = e.target.value;
+                              setForcedBaseModel(nextBase);
+                              const nextGroup = groups.find((g) => g.baseId === nextBase);
+                              if (
+                                nextGroup &&
+                                forcedEffort &&
+                                !nextGroup.efforts.includes(forcedEffort)
+                              ) {
+                                setForcedEffort(pickBestEffort(nextGroup) ?? '');
+                              }
+                            }}
+                          >
+                            <option value="">
+                              {activeGroup?.label ?? parsedDefault.baseId}
+                            </option>
+                            {groups.map((g) => (
+                              <option key={g.baseId} value={g.baseId}>
+                                {g.label}
+                              </option>
+                            ))}
+                          </select>
+
+                          {activeGroup && activeGroup.efforts.length > 0 && (
+                            <select
+                              className="select-compact"
+                              aria-label="Effort override"
+                              value={forcedEffort}
+                              onChange={(e) =>
+                                setForcedEffort(e.target.value as EffortLevel | '')
+                              }
                             >
-                              <Copy size={12} />
-                              {copiedId === sub.id ? 'Copied' : 'Copy'}
-                            </button>
+                              <option value="">
+                                {parsedDefault.effort
+                                  ? EFFORT_LABELS[parsedDefault.effort]
+                                  : pinned.effort
+                                    ? EFFORT_LABELS[pinned.effort]
+                                    : 'Default'}
+                              </option>
+                              {activeGroup.efforts.map((lvl) => (
+                                <option key={lvl} value={lvl}>
+                                  {EFFORT_LABELS[lvl]}
+                                </option>
+                              ))}
+                            </select>
                           )}
-                        </div>
-                      </div>
+                        </>
+                      );
+                    })()}
 
-                      {sub.attempts.length > 1 && (
-                        <div className="attempt-trail">
-                          <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
-                            Failover Trail:
-                          </span>
-                          {sub.attempts.map((att, idx) => (
-                            <React.Fragment key={`${sub.id}-${att.attemptNumber}`}>
-                              {idx > 0 && <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} />}
-                              <span
-                                className={`pill ${
-                                  att.status === 'completed'
-                                    ? 'pill-success'
-                                    : att.status === 'rate-limited'
-                                      ? 'pill-warning'
-                                      : att.status === 'failed'
-                                        ? 'pill-danger'
-                                        : 'pill-accent'
-                                }`}
-                                title={att.reason || att.model}
-                              >
-                                {att.accountName}
-                                {att.status === 'rate-limited'
-                                  ? ' (Limit Hit)'
-                                  : att.status === 'failed'
-                                    ? ' (Error)'
-                                    : ''}
-                              </span>
-                            </React.Fragment>
-                          ))}
-                        </div>
-                      )}
+                    <label
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontSize: 12,
+                        color: fastMode ? 'var(--accent)' : 'var(--text-secondary)',
+                        fontWeight: fastMode ? 600 : 400,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={fastMode}
+                        onChange={(e) => setFastMode(e.target.checked)}
+                      />
+                      <Zap size={12} />
+                      Fast
+                    </label>
 
-                      {isRunning && sub.output && (
-                        <div className="streaming-status-bar" role="status" aria-live="polite">
-                          <span className="thinking-pill" style={{ fontSize: 11.5 }}>
-                            <span className="thinking-orb" />
-                            <span>{sub.liveStatus || 'Streaming response...'}</span>
-                          </span>
-                          {elapsedSec && <span className="mono">{elapsedSec}s</span>}
-                        </div>
-                      )}
+                    <label
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        fontSize: 12,
+                        color: 'var(--text-secondary)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={autoDecompose}
+                        onChange={(e) => setAutoDecompose(e.target.checked)}
+                      />
+                      Split steps
+                    </label>
+                  </div>
 
-                      {isRunning && !sub.output ? (
-                        <div className="live-thinking-box" role="status" aria-live="polite">
-                          <div className="thinking-status-row">
-                            <span className="thinking-pill">
-                              <span className="thinking-orb" />
-                              <span>
-                                {sub.liveStatus ||
-                                  `Thinking with ${sub.assignedAccountName ?? 'model'}...`}
-                              </span>
-                            </span>
-                            {elapsedSec && <span className="mono">{elapsedSec}s</span>}
-                          </div>
-                          <div className="shimmer-lines" aria-hidden="true">
-                            <div className="shimmer-line" style={{ width: '92%' }} />
-                            <div className="shimmer-line" style={{ width: '78%' }} />
-                            <div className="shimmer-line" style={{ width: '61%' }} />
-                          </div>
-                        </div>
-                      ) : sub.output ? (
-                        <div className="assistant-response-body">
-                          <MarkdownView text={sub.output} streaming={isRunning} />
-                        </div>
-                      ) : (
-                        <div
-                          style={{
-                            padding: '14px 16px',
-                            fontSize: 12.5,
-                            color: 'var(--text-secondary)',
-                            background: 'var(--bg-surface)',
-                          }}
-                        >
-                          {sub.status === 'pending'
-                            ? 'Queued — waiting for previous step...'
-                            : sub.error || 'No output.'}
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-                <div ref={detailEndRef} />
-              </div>
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={
+                      (!prompt.trim() && attachments.length === 0) || state.accounts.length === 0
+                    }
+                  >
+                    <Send size={13} />
+                    {threadTurns.length > 0 ? 'Reply' : 'Send'}
+                  </button>
+                </div>
+              </form>
             </>
           )}
         </section>
