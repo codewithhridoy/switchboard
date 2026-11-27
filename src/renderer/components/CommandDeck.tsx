@@ -52,7 +52,10 @@ interface CommandDeckProps {
   onCreateThread: (projectId: string | null, title?: string) => Promise<ChatThread | null>;
   onDeleteThread: (threadId: string) => Promise<void>;
   onEnqueueTask: (input: CreateTaskInput) => Promise<OrchestratedTask | null>;
-  onRetryTask: (taskId: string) => Promise<void>;
+  onRetryTask: (
+    taskId: string,
+    opts?: { permissionMode?: CodingPermissionMode }
+  ) => Promise<void>;
   onCancelTask: (taskId: string) => Promise<void>;
   onDeleteTask: (taskId: string) => Promise<void>;
   onPickFolder: () => Promise<string | null>;
@@ -416,9 +419,9 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                 aria-label="Coding agent permissions"
                 value={permissionMode}
                 onChange={(e) => setPermissionMode(e.target.value as CodingPermissionMode)}
-                title="Controls whether headless coding agents can edit files and run commands"
+                title="Edits Only allows file edits but blocks shell commands (git/pnpm); Full Auto allows both file edits and shell commands"
               >
-                <option value="accept-edits">Edits: Auto-Approve</option>
+                <option value="accept-edits">Edits Only (No Shell)</option>
                 <option value="full-auto">Full Auto (Edits + Shell)</option>
                 <option value="read-only">Plan / Read-Only</option>
               </select>
@@ -656,34 +659,63 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                         <div>{turn.prompt}</div>
                       </div>
 
-                      {turn.error && (
-                        <div
-                          style={{
-                            padding: '10px 12px',
-                            borderRadius: 'var(--radius-md)',
-                            background: 'var(--danger-soft)',
-                            color: 'var(--danger)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            gap: 8,
-                            fontSize: 12.5,
-                          }}
-                        >
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <AlertTriangle size={15} />
-                            <span>{turn.error}</span>
-                          </span>
-                          <button
-                            type="button"
-                            className="btn btn-primary btn-sm"
-                            onClick={() => void onRetryTask(turn.id)}
+                      {turn.error && (() => {
+                        const isPermIssue =
+                          turn.mode === 'coding' &&
+                          turn.permissionMode !== 'full-auto' &&
+                          /permission|full auto|auto-denied|denied|without returning any output/i.test(
+                            turn.error
+                          );
+                        return (
+                          <div
+                            style={{
+                              padding: '10px 12px',
+                              borderRadius: 'var(--radius-md)',
+                              background: 'var(--danger-soft)',
+                              color: 'var(--danger)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 10,
+                              fontSize: 12.5,
+                              flexWrap: 'wrap',
+                            }}
                           >
-                            <RefreshCw size={12} />
-                            Retry
-                          </button>
-                        </div>
-                      )}
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 220 }}>
+                              <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+                              <span>{turn.error}</span>
+                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                              {isPermIssue && (
+                                <button
+                                  type="button"
+                                  className="btn btn-primary btn-sm"
+                                  onClick={() => {
+                                    setPermissionMode('full-auto');
+                                    void onRetryTask(turn.id, { permissionMode: 'full-auto' });
+                                  }}
+                                >
+                                  <Zap size={12} />
+                                  Switch to Full Auto & Retry
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className={`btn ${isPermIssue ? '' : 'btn-primary'} btn-sm`}
+                                onClick={() =>
+                                  void onRetryTask(
+                                    turn.id,
+                                    turn.mode === 'coding' ? { permissionMode } : undefined
+                                  )
+                                }
+                              >
+                                <RefreshCw size={12} />
+                                Retry
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Assistant Subtask Cards */}
                       {turn.subtasks.map((sub) => {
@@ -727,11 +759,18 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                                     Stop
                                   </button>
                                 )}
-                                {(turn.status === 'failed' || turn.status === 'cancelled') && (
+                                {(turn.status === 'failed' ||
+                                  turn.status === 'cancelled' ||
+                                  (turn.status === 'completed' && !sub.output.trim())) && (
                                   <button
                                     type="button"
                                     className="btn btn-sm"
-                                    onClick={() => void onRetryTask(turn.id)}
+                                    onClick={() =>
+                                      void onRetryTask(
+                                        turn.id,
+                                        turn.mode === 'coding' ? { permissionMode } : undefined
+                                      )
+                                    }
                                   >
                                     <RefreshCw size={11} />
                                     Retry

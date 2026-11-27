@@ -4,6 +4,7 @@ import {
   ChatThread,
   CliHealthInfo,
   CloneRepoInput,
+  CodingPermissionMode,
   CreateAccountInput,
   CreatePrInput,
   CreateProjectInput,
@@ -70,7 +71,10 @@ export interface SwitchboardApi {
   gitCreatePr: (input: CreatePrInput) => Promise<{ url: string; number: number }>;
   // Tasks
   enqueueTask: (input: CreateTaskInput) => Promise<OrchestratedTask>;
-  retryTask: (taskId: string) => Promise<OrchestratedTask | null>;
+  retryTask: (
+    taskId: string,
+    opts?: { permissionMode?: CodingPermissionMode }
+  ) => Promise<OrchestratedTask | null>;
   cancelTask: (taskId: string) => Promise<boolean>;
   deleteTask: (taskId: string) => Promise<boolean>;
   pickFolder: () => Promise<string | null>;

@@ -73,4 +73,49 @@ describe('NDJSON stream parsers', () => {
       cacheTokens: 50,
     });
   });
+
+  it('surfaces Agy headless denied_actions and live tool command status instead of empty success', () => {
+    const toolStep = parseAgyStreamLine(
+      JSON.stringify({
+        event: 'step_update',
+        step_update: {
+          step_type: 'tool',
+          state: 'ACTIVE',
+          tool_name: 'run_command',
+          tool_info: {
+            name: 'run_command',
+            parameters: { CommandLine: 'git status -sb' },
+          },
+        },
+      })
+    );
+    expect(toolStep?.statusText).toContain('git status -sb');
+
+    const deniedResult = parseAgyStreamLine(
+      JSON.stringify({
+        event: 'result',
+        result: {
+          status: 'SUCCESS',
+          response: '',
+          denied_actions: [{ action: 'command', display_name: 'Bash' }],
+          usage: { input_tokens: 100, output_tokens: 0, cache_read_tokens: 0 },
+        },
+      })
+    );
+    expect(deniedResult?.permissionDenied).toBe(true);
+    expect(deniedResult?.errorText).toContain('Bash (command)');
+    expect(deniedResult?.errorText).toContain('Full Auto');
+  });
+
+  it('surfaces Claude headless permission_denials when result is empty', () => {
+    const deniedResult = parseClaudeStreamLine(
+      JSON.stringify({
+        type: 'result',
+        result: '',
+        permission_denials: [{ tool_name: 'Bash' }],
+      })
+    );
+    expect(deniedResult?.permissionDenied).toBe(true);
+    expect(deniedResult?.errorText).toContain('Bash');
+  });
 });

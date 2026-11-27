@@ -110,6 +110,8 @@ export function spawnNdjsonCliProcess(opts: {
     let streamedText = '';
     let finalText = '';
     let errorText = '';
+    let permissionDenied = false;
+    const nonJsonNotes: string[] = [];
     let usage: RunUsage | undefined;
     let lineBuffer = '';
     let settled = false;
@@ -146,7 +148,15 @@ export function spawnNdjsonCliProcess(opts: {
     opts.signal.addEventListener('abort', onAbort, { once: true });
 
     const handleLine = (line: string) => {
-      const parsed = opts.parseLine(line);
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      if (!trimmed.startsWith('{')) {
+        if (nonJsonNotes.length < 6) {
+          nonJsonNotes.push(trimmed.slice(0, 300));
+        }
+        return;
+      }
+      const parsed = opts.parseLine(trimmed);
       if (!parsed) return;
       if (parsed.statusText) {
         opts.onStatus?.(parsed.statusText);
@@ -163,6 +173,9 @@ export function spawnNdjsonCliProcess(opts: {
       }
       if (parsed.errorText) {
         errorText = parsed.errorText;
+      }
+      if (parsed.permissionDenied) {
+        permissionDenied = true;
       }
     };
 
@@ -212,6 +225,28 @@ export function spawnNdjsonCliProcess(opts: {
       // on a clean exit — Claude stream-json emits informational `rate_limit_event`
       // objects on every healthy turn, and user code/answers often mention "429" or "rate limit".
       if (code === 0 && !errorText) {
+        if (!output) {
+          const diag = [nonJsonNotes.join(' ').trim(), stderr.trim()]
+            .filter(Boolean)
+            .join(' — ')
+            .trim();
+          const looksPermissionDenied =
+            permissionDenied ||
+            /permission|auto-denied|--dangerously-skip-permissions|denied_actions/i.test(diag);
+          resolve({
+            ok: false,
+            output: '',
+            usage,
+            permissionDenied: looksPermissionDenied,
+            error: looksPermissionDenied
+              ? `Permission denied in headless mode${diag ? `: ${diag.slice(0, 220)}` : ''}. Switch Permissions to "Full Auto (Edits + Shell)" and click Retry.`
+              : diag
+                ? `${opts.providerLabel} returned no output: ${diag.slice(0, 280)}`
+                : `${opts.providerLabel} finished without returning any output. If this coding task needed shell commands (git, pnpm, tests), switch Permissions to "Full Auto (Edits + Shell)" and click Retry.`,
+          });
+          return;
+        }
+
         const shortExitLimit =
           output.length > 0 && output.length < 240 ? detectRateLimit(output) : { isRateLimited: false };
         if (!shortExitLimit.isRateLimited) {
@@ -232,8 +267,8 @@ export function spawnNdjsonCliProcess(opts: {
 
       // Only inspect explicit CLI error text and stderr (or short output when both are empty)
       const errorSource =
-        errorText || stderr.trim() || (output.length < 500 ? output : '');
-      const limitCheck = detectRateLimit(errorSource);
+        errorText || stderr.trim() || nonJsonNotes.join(' ').trim() || (output.length < 500 ? output : '');
+      const limitCheck = permissionDenied ? { isRateLimited: false } : detectRateLimit(errorSource);
 
       if (limitCheck.isRateLimited) {
         resolve({
@@ -248,11 +283,15 @@ export function spawnNdjsonCliProcess(opts: {
         return;
       }
 
-      const cleanFallback = (errorText || stderr.trim() || output).slice(0, 320);
+      const cleanFallback = (errorText || stderr.trim() || nonJsonNotes.join(' ').trim() || output).slice(
+        0,
+        360
+      );
       resolve({
         ok: false,
         output,
         usage,
+        permissionDenied,
         error: cleanFallback || `${opts.providerLabel} exited with code ${code ?? 'unknown'}`,
       });
     });

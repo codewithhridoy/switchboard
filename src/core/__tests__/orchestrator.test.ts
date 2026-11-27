@@ -157,4 +157,70 @@ describe('SwitchboardOrchestrator failover flow', () => {
     expect(seenPrompts[1]).toContain('PINEAPPLE');
     expect(seenPrompts[1]).toContain('Reply #1');
   });
+
+  it('fails fast on permissionDenied without failover and succeeds when retried in full-auto', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'switchboard-perm-'));
+    tempDirs.push(tmp);
+
+    const store = new SwitchboardStore(tmp);
+    const seenModes: Array<string | undefined> = [];
+
+    const mockRunner: ProviderRunner = {
+      async run(req: RunRequest): Promise<RunResult> {
+        seenModes.push(req.permissionMode);
+        if (req.permissionMode !== 'full-auto') {
+          return {
+            ok: false,
+            output: '',
+            permissionDenied: true,
+            error: 'Permission denied in headless mode for: Bash (command).',
+          };
+        }
+        req.onChunk('PR created successfully!', 'stdout');
+        return { ok: true, output: 'PR created successfully!' };
+      },
+    };
+
+    const orchestrator = new SwitchboardOrchestrator({
+      store,
+      runnerFactory: () => mockRunner,
+    });
+
+    const waitDone = (taskId: string) =>
+      new Promise<void>((resolve) => {
+        const check = () => {
+          const cur = orchestrator.getState().tasks.find((t) => t.id === taskId);
+          if (cur && (cur.status === 'completed' || cur.status === 'failed')) {
+            resolve();
+          } else {
+            setTimeout(check, 15);
+          }
+        };
+        check();
+      });
+
+    const task = orchestrator.enqueueTask({
+      mode: 'coding',
+      permissionMode: 'accept-edits',
+      prompt: 'Complete all tasks and create PR to main',
+      autoDecompose: false,
+    });
+    await waitDone(task.id);
+
+    const failedTask = orchestrator.getState().tasks.find((t) => t.id === task.id)!;
+    expect(failedTask.status).toBe('failed');
+    expect(failedTask.failoverCount).toBe(0);
+    expect(failedTask.subtasks[0].attempts).toHaveLength(1);
+    expect(failedTask.error).toContain('Permission denied');
+
+    // Retry with permissionMode upgraded to full-auto
+    orchestrator.retryTask(task.id, { permissionMode: 'full-auto' });
+    await waitDone(task.id);
+
+    const retriedTask = orchestrator.getState().tasks.find((t) => t.id === task.id)!;
+    expect(retriedTask.status).toBe('completed');
+    expect(retriedTask.permissionMode).toBe('full-auto');
+    expect(retriedTask.subtasks[0].output).toContain('PR created successfully!');
+    expect(seenModes).toEqual(['accept-edits', 'full-auto']);
+  });
 });

@@ -18,6 +18,7 @@ import {
   AccountProfile,
   AppSettings,
   CloneRepoInput,
+  CodingPermissionMode,
   CreateAccountInput,
   CreatePrInput,
   CreateProjectInput,
@@ -256,8 +257,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle('switchboard:enqueue-task', (_e, input: CreateTaskInput) =>
     orchestrator.enqueueTask(input)
   );
-  ipcMain.handle('switchboard:retry-task', (_e, taskId: string) =>
-    orchestrator.retryTask(taskId)
+  ipcMain.handle(
+    'switchboard:retry-task',
+    (_e, taskId: string, opts?: { permissionMode?: CodingPermissionMode }) =>
+      orchestrator.retryTask(taskId, opts)
   );
   ipcMain.handle('switchboard:cancel-task', (_e, taskId: string) =>
     orchestrator.cancelTask(taskId)

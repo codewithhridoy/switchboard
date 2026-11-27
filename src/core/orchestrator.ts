@@ -9,6 +9,7 @@ import {
   ChatThread,
   CliHealthInfo,
   CloneRepoInput,
+  CodingPermissionMode,
   CreateAccountInput,
   CreateProjectInput,
   CreateTaskInput,
@@ -665,18 +666,28 @@ export class SwitchboardOrchestrator extends EventEmitter {
     return task;
   }
 
-  public retryTask(taskId: string): OrchestratedTask | null {
+  public retryTask(
+    taskId: string,
+    opts?: { permissionMode?: CodingPermissionMode }
+  ): OrchestratedTask | null {
     const data = this.store.getData();
     const task = data.tasks.find((t) => t.id === taskId);
     if (!task || task.status === 'running') return null;
+
+    if (opts?.permissionMode && task.mode === 'coding') {
+      task.permissionMode = opts.permissionMode;
+    }
 
     task.status = 'queued';
     task.error = undefined;
     task.completedAt = undefined;
     for (const sub of task.subtasks) {
-      if (sub.status !== 'completed') {
+      if (sub.status !== 'completed' || !sub.output.trim()) {
         sub.status = 'pending';
         sub.error = undefined;
+        sub.liveStatus = undefined;
+        sub.output = '';
+        sub.completedAt = undefined;
       }
     }
     this.store.save();
@@ -1028,6 +1039,17 @@ export class SwitchboardOrchestrator extends EventEmitter {
         continue;
       }
 
+      if (result.permissionDenied) {
+        attempt.status = 'failed';
+        attempt.reason = result.error ?? 'Permission denied in headless mode';
+        subtask.status = 'failed';
+        subtask.liveStatus = undefined;
+        subtask.error = attempt.reason;
+        this.store.save();
+        this.emitState();
+        return false;
+      }
+
       attempt.status = 'failed';
       attempt.reason = result.error ?? 'Unknown error';
       excludeIds.push(account.id);
@@ -1063,6 +1085,7 @@ export class SwitchboardOrchestrator extends EventEmitter {
       }
 
       subtask.status = 'failed';
+      subtask.liveStatus = undefined;
       subtask.error = result.error ?? 'Execution failed';
       this.store.save();
       this.emitState();

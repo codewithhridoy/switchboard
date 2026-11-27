@@ -8,6 +8,7 @@ import {
   AccountProfile,
   AppSettings,
   CloneRepoInput,
+  CodingPermissionMode,
   CreateAccountInput,
   CreatePrInput,
   CreateProjectInput,
@@ -357,9 +358,9 @@ export function useSwitchboard() {
       }
       return null;
     },
-    retryTask: async (taskId: string) => {
+    retryTask: async (taskId: string, opts?: { permissionMode?: CodingPermissionMode }) => {
       if (window.switchboard) {
-        await window.switchboard.retryTask(taskId);
+        await window.switchboard.retryTask(taskId, opts);
         await reload();
       }
     },

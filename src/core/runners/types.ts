@@ -24,6 +24,7 @@ export interface RunResult {
   output: string;
   usage?: RunUsage;
   error?: string;
+  permissionDenied?: boolean;
   rateLimited?: boolean;
   rateLimitReason?: string;
   retryAfterMs?: number;

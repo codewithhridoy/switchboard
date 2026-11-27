@@ -6,6 +6,7 @@ export interface ParsedStreamDelta {
   finalText?: string;
   usage?: RunUsage;
   errorText?: string;
+  permissionDenied?: boolean;
 }
 
 /**
@@ -79,8 +80,28 @@ export function parseClaudeStreamLine(line: string): ParsedStreamDelta | null {
       };
     }
 
+    const finalText = typeof obj.result === 'string' ? obj.result : undefined;
+    if (
+      Array.isArray(obj.permission_denials) &&
+      obj.permission_denials.length > 0 &&
+      (!finalText || !finalText.trim())
+    ) {
+      const deniedTools = Array.from(
+        new Set(
+          obj.permission_denials
+            .map((d: any) => d?.tool_name || d?.tool || d?.action || 'tool')
+            .filter(Boolean)
+        )
+      ).join(', ');
+      return {
+        errorText: `Permission denied in headless mode for: ${deniedTools || 'tool approval'}. Switch Permissions to "Full Auto (Edits + Shell)" and click Retry.`,
+        permissionDenied: true,
+        usage,
+      };
+    }
+
     return {
-      finalText: typeof obj.result === 'string' ? obj.result : undefined,
+      finalText,
       usage,
     };
   }
@@ -115,6 +136,24 @@ export function parseAgyStreamLine(line: string): ParsedStreamDelta | null {
         statusText: su.state === 'ACTIVE' ? 'Streaming response...' : undefined,
       };
     }
+    if (su.step_type === 'tool') {
+      const toolName = su.tool_name || su.tool_info?.name || 'tool';
+      if (su.state === 'ACTIVE') {
+        const cmd = su.tool_info?.parameters?.CommandLine;
+        if (typeof cmd === 'string' && cmd.trim()) {
+          const compact = cmd.trim().replace(/\s+/g, ' ').slice(0, 64);
+          return { statusText: `Running: ${compact}${cmd.trim().length > 64 ? '…' : ''}` };
+        }
+        return { statusText: `Running tool: ${toolName}...` };
+      }
+      if (su.state === 'ERROR') {
+        const errMsg = su.tool_info?.error?.message;
+        if (typeof errMsg === 'string' && /permission/i.test(errMsg)) {
+          return { statusText: `Tool permission blocked (${toolName})...` };
+        }
+      }
+      return null;
+    }
     if (su.step_type && su.step_type !== 'user_input' && su.state === 'ACTIVE') {
       const niceType = String(su.step_type).replace(/_/g, ' ');
       return {
@@ -145,8 +184,34 @@ export function parseAgyStreamLine(line: string): ParsedStreamDelta | null {
       };
     }
 
+    const responseText = typeof r.response === 'string' ? r.response : undefined;
+    if (
+      Array.isArray(r.denied_actions) &&
+      r.denied_actions.length > 0 &&
+      (!responseText || !responseText.trim())
+    ) {
+      const deniedLabels = Array.from(
+        new Set(
+          r.denied_actions
+            .map((d: any) => {
+              const label = d?.display_name || d?.action;
+              if (d?.display_name && d?.action && d.display_name.toLowerCase() !== d.action.toLowerCase()) {
+                return `${d.display_name} (${d.action})`;
+              }
+              return label || 'tool';
+            })
+            .filter(Boolean)
+        )
+      ).join(', ');
+      return {
+        errorText: `Permission denied in headless mode for: ${deniedLabels}. Switch Permissions to "Full Auto (Edits + Shell)" and click Retry so the agent can run shell commands.`,
+        permissionDenied: true,
+        usage,
+      };
+    }
+
     return {
-      finalText: typeof r.response === 'string' ? r.response : undefined,
+      finalText: responseText,
       usage,
     };
   }
